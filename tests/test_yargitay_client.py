@@ -36,15 +36,19 @@ class YargitayClientTests(unittest.TestCase):
                 FakeResponse({"data": {"data": [{"daire": "1. Hukuk Dairesi"}]}}),
             ]
             result = client.list_decisions(
-            start_date="01.01.2025", end_date="01.12.2025", page_size=1
+                start_date="01.01.2025", end_date="01.12.2025", page_size=1
             )
         self.assertEqual(result["data"]["data"][0]["daire"], "1. Hukuk Dairesi")
         request = mocked_open.call_args.args[0]
         sent = json.loads(request.data.decode("utf-8"))["data"]
         self.assertEqual(sent["pageNumber"], 1)
         self.assertEqual(sent["pageSize"], 1)
-        self.assertTrue(mocked_open.call_args_list[0].args[0].full_url.endswith("/detayliArama"))
-        self.assertTrue(mocked_open.call_args_list[1].args[0].full_url.endswith("/aramadetaylist"))
+        self.assertTrue(
+            mocked_open.call_args_list[0].args[0].full_url.endswith("/detayliArama")
+        )
+        self.assertTrue(
+            mocked_open.call_args_list[1].args[0].full_url.endswith("/aramadetaylist")
+        )
 
     def test_rejects_invalid_paging(self):
         with self.assertRaises(ValueError):
