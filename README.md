@@ -57,6 +57,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Python 3.12 sanal ortamı oluşturuldu.
 - Yerel Git deposu başlatıldı.
 - Temel proje klasör yapısı oluşturuldu.
+- Yargıtay liste ve detay uç noktaları Python ile canlı olarak doğrulandı.
+- En fazla 10 kararlık örnek JSONL üretme komutu ve HTTP istemcisi hazırlandı.
 
 ## Uyarı
 
