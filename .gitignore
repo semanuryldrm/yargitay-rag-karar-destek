@@ -3,3 +3,6 @@ __pycache__/
 *.py[cod]
 .env
 .pytest_cache/
+data/raw/decisions.jsonl
+data/raw/scrape_state.json
+logs/*.log

@@ -27,8 +27,13 @@ class YargitayClient:
     _search_signature: str | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
+        self.reset_session()
+
+    def reset_session(self) -> None:
+        """Discard cookies and prepared-search state before a retry."""
         self._opener = build_opener(HTTPCookieProcessor(CookieJar()))
         self._session_ready = False
+        self._search_signature = None
 
     def list_decisions(
         self,
