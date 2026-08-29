@@ -8,11 +8,16 @@ import logging
 import re
 import time
 import unicodedata
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Protocol, TypeVar, TypedDict
 
-from yargitay_client import YargitayClient, YargitayClientError
+from yargitay_client import (
+    YargitayAccessBlockedError,
+    YargitayClient,
+    YargitayClientError,
+)
 
 
 class DecisionDataError(RuntimeError):
@@ -45,8 +50,22 @@ class YargitayClientProtocol(Protocol):
 
 
 class ScrapeState(TypedDict):
+    schema_version: int
+    start_date: str
+    end_date: str
+    page_size: int
     last_completed_page: int
     total_saved: int
+    total_failed: int
+
+
+class FailedDecision(TypedDict):
+    id: str
+    page_number: int
+    failed_at: str
+    error_type: str
+    error: str
+    summary: dict[str, Any]
 
 
 LIST_FIELDS = {
@@ -60,6 +79,7 @@ LIST_FIELDS = {
 T = TypeVar("T")
 LOGGER_NAME = "yargitay_scraper"
 INVALID_TEXT_CHARACTERS = {"\x00", "\ufffd"}
+RATE_LIMIT_MARKERS = ("429", "too many requests", "bulkhead")
 
 
 class _VisibleTextParser(HTMLParser):
@@ -255,6 +275,45 @@ def append_jsonl(records: list[DecisionRecord], output_path: Path) -> None:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def append_failed_decisions(
+    records: list[FailedDecision], failure_path: Path
+) -> None:
+    if not records:
+        return
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    with failure_path.open("a", encoding="utf-8", newline="\n") as stream:
+        for record in records:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def load_failed_count(failure_path: Path) -> int:
+    if not failure_path.exists():
+        return 0
+    count = 0
+    try:
+        with failure_path.open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise DecisionDataError(
+                        f"Invalid failure JSONL at {failure_path}:{line_number}"
+                    ) from exc
+                decision_id = record.get("id") if isinstance(record, dict) else None
+                if decision_id is None or not str(decision_id).strip():
+                    raise DecisionDataError(
+                        f"Missing failed decision id at {failure_path}:{line_number}"
+                    )
+                count += 1
+    except UnicodeDecodeError as exc:
+        raise DecisionDataError(
+            f"Failure JSONL is not valid UTF-8: {failure_path}"
+        ) from exc
+    return count
+
+
 def load_existing_ids(output_path: Path) -> set[str]:
     if not output_path.exists():
         return set()
@@ -281,9 +340,23 @@ def load_existing_ids(output_path: Path) -> set[str]:
     return decision_ids
 
 
-def load_state(state_path: Path) -> ScrapeState:
+def load_state(
+    state_path: Path,
+    *,
+    start_date: str = "",
+    end_date: str = "",
+    page_size: int = 0,
+) -> ScrapeState:
     if not state_path.exists():
-        return ScrapeState(last_completed_page=0, total_saved=0)
+        return ScrapeState(
+            schema_version=2,
+            start_date=start_date,
+            end_date=end_date,
+            page_size=page_size,
+            last_completed_page=0,
+            total_saved=0,
+            total_failed=0,
+        )
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -292,11 +365,50 @@ def load_state(state_path: Path) -> ScrapeState:
         raise DecisionDataError("Scrape state root must be an object")
     last_page = state.get("last_completed_page")
     total_saved = state.get("total_saved")
+    total_failed = state.get("total_failed", 0)
     if not isinstance(last_page, int) or last_page < 0:
         raise DecisionDataError("Invalid last_completed_page in scrape state")
     if not isinstance(total_saved, int) or total_saved < 0:
         raise DecisionDataError("Invalid total_saved in scrape state")
-    return ScrapeState(last_completed_page=last_page, total_saved=total_saved)
+    if not isinstance(total_failed, int) or total_failed < 0:
+        raise DecisionDataError("Invalid total_failed in scrape state")
+
+    stored_start_date = state.get("start_date", "")
+    stored_end_date = state.get("end_date", "")
+    stored_page_size = state.get("page_size", 0)
+    if not isinstance(stored_start_date, str) or not isinstance(stored_end_date, str):
+        raise DecisionDataError("Invalid date configuration in scrape state")
+    if not isinstance(stored_page_size, int) or stored_page_size < 0:
+        raise DecisionDataError("Invalid page_size in scrape state")
+
+    requested_configuration = bool(start_date or end_date or page_size)
+    stored_configuration = bool(
+        stored_start_date or stored_end_date or stored_page_size
+    )
+    has_progress = last_page > 0 or total_saved > 0 or total_failed > 0
+    if requested_configuration and has_progress and not stored_configuration:
+        raise DecisionDataError(
+            "Scrape state lacks query configuration; start with a new state file"
+        )
+    if requested_configuration and stored_configuration:
+        if (
+            stored_start_date != start_date
+            or stored_end_date != end_date
+            or stored_page_size != page_size
+        ):
+            raise DecisionDataError(
+                "Scrape state query configuration does not match this run"
+            )
+
+    return ScrapeState(
+        schema_version=2,
+        start_date=stored_start_date or start_date,
+        end_date=stored_end_date or end_date,
+        page_size=stored_page_size or page_size,
+        last_completed_page=last_page,
+        total_saved=total_saved,
+        total_failed=total_failed,
+    )
 
 
 def save_state(state_path: Path, state: ScrapeState) -> None:
@@ -323,11 +435,20 @@ def retry_call(
     for attempt in range(1, attempts + 1):
         try:
             return operation()
+        except YargitayAccessBlockedError:
+            logger.critical(
+                "%s stopped because the service requires an interactive CAPTCHA",
+                description,
+            )
+            raise
         except (YargitayClientError, DecisionDataError) as exc:
             if attempt == attempts:
                 logger.error("%s failed after %s attempts: %s", description, attempts, exc)
                 raise
             wait_seconds = retry_delay * attempt
+            error_text = str(exc).casefold()
+            if any(marker in error_text for marker in RATE_LIMIT_MARKERS):
+                wait_seconds = max(wait_seconds, 30.0 * attempt)
             logger.warning(
                 "%s failed on attempt %s/%s: %s; retrying in %.2f seconds",
                 description,
@@ -372,6 +493,9 @@ def run_scraper(
     output_path: Path,
     state_path: Path,
     logger: logging.Logger,
+    failure_path: Path | None = None,
+    continue_on_error: bool = False,
+    target_count: int | None = None,
     attempts: int = 3,
     retry_delay: float = 2.0,
     request_delay: float = 1.0,
@@ -381,16 +505,41 @@ def run_scraper(
         raise ValueError("max_pages must be at least 1")
     if request_delay < 0 or retry_delay < 0:
         raise ValueError("delay values cannot be negative")
+    if target_count is not None and target_count < 1:
+        raise ValueError("target_count must be at least 1")
+    if continue_on_error and failure_path is None:
+        raise ValueError("failure_path is required when continue_on_error is enabled")
 
-    state = load_state(state_path)
+    state = load_state(
+        state_path,
+        start_date=start_date,
+        end_date=end_date,
+        page_size=page_size,
+    )
     existing_ids = load_existing_ids(output_path)
     if state["total_saved"] != len(existing_ids):
         raise DecisionDataError(
             "Scrape state total_saved does not match unique ids in output JSONL"
         )
+    if failure_path is not None:
+        stored_failure_count = load_failed_count(failure_path)
+        if state["total_failed"] != stored_failure_count:
+            raise DecisionDataError(
+                "Scrape state total_failed does not match failure JSONL"
+            )
+    if target_count is not None and len(existing_ids) >= target_count:
+        logger.info(
+            "Target already reached: %s/%s successful decisions",
+            len(existing_ids),
+            target_count,
+        )
+        return state
     first_page = state["last_completed_page"] + 1
     logger.info(
-        "Starting from page %s with %s existing decisions", first_page, len(existing_ids)
+        "Starting from page %s with %s successful and %s failed decisions",
+        first_page,
+        len(existing_ids),
+        state["total_failed"],
     )
 
     for page_number in range(first_page, first_page + max_pages):
@@ -420,8 +569,16 @@ def run_scraper(
             break
 
         page_records: list[DecisionRecord] = []
+        page_failures: list[FailedDecision] = []
         page_ids: set[str] = set()
+        page_fully_processed = True
         for summary in summaries:
+            if (
+                target_count is not None
+                and len(existing_ids) + len(page_ids) >= target_count
+            ):
+                page_fully_processed = False
+                break
             decision_id_value = summary.get("id")
             if decision_id_value is None or not str(decision_id_value).strip():
                 raise DecisionDataError("Decision summary is missing id")
@@ -431,33 +588,74 @@ def run_scraper(
                 continue
             if request_delay:
                 sleep_fn(request_delay)
-            record = retry_call(
-                lambda decision_id=decision_id, summary=summary: build_decision_record(
-                    summary, client.get_decision(decision_id)
-                ),
-                description=f"decision detail {decision_id}",
-                attempts=attempts,
-                retry_delay=retry_delay,
-                logger=logger,
-                sleep_fn=sleep_fn,
-                on_retry=client.reset_session,
-            )
+            try:
+                record = retry_call(
+                    lambda decision_id=decision_id, summary=summary: build_decision_record(
+                        summary, client.get_decision(decision_id)
+                    ),
+                    description=f"decision detail {decision_id}",
+                    attempts=attempts,
+                    retry_delay=retry_delay,
+                    logger=logger,
+                    sleep_fn=sleep_fn,
+                    on_retry=client.reset_session,
+                )
+            except YargitayAccessBlockedError:
+                raise
+            except (YargitayClientError, DecisionDataError) as exc:
+                if not continue_on_error:
+                    raise
+                logger.error(
+                    "Skipping decision %s after final failure: %s", decision_id, exc
+                )
+                page_failures.append(
+                    FailedDecision(
+                        id=decision_id,
+                        page_number=page_number,
+                        failed_at=datetime.now(timezone.utc).isoformat(),
+                        error_type=type(exc).__name__,
+                        error=str(exc),
+                        summary=dict(summary),
+                    )
+                )
+                continue
             page_records.append(record)
             page_ids.add(decision_id)
 
         append_jsonl(page_records, output_path)
+        if failure_path is not None:
+            append_failed_decisions(page_failures, failure_path)
         existing_ids.update(page_ids)
         state = ScrapeState(
-            last_completed_page=page_number,
+            schema_version=2,
+            start_date=start_date,
+            end_date=end_date,
+            page_size=page_size,
+            last_completed_page=(
+                page_number if page_fully_processed else state["last_completed_page"]
+            ),
             total_saved=len(existing_ids),
+            total_failed=state["total_failed"] + len(page_failures),
         )
         save_state(state_path, state)
+        progress = (
+            f"{(state['total_saved'] / target_count) * 100:.2f}%"
+            if target_count is not None
+            else "n/a"
+        )
         logger.info(
-            "Completed page %s; saved %s new decisions; total %s",
+            "Completed page %s; saved %s; failed %s; totals successful=%s "
+            "failed=%s; target progress=%s",
             page_number,
             len(page_records),
+            len(page_failures),
             state["total_saved"],
+            state["total_failed"],
+            progress,
         )
+        if target_count is not None and state["total_saved"] >= target_count:
+            logger.info("Target of %s successful decisions reached", target_count)
+            break
     return state
 
 
@@ -469,6 +667,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", default="01.12.2025")
     parser.add_argument("--page-size", type=int, default=3, choices=range(1, 101))
     parser.add_argument("--max-pages", type=int, default=1)
+    parser.add_argument("--target-count", type=int)
+    parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--retry-delay", type=float, default=2.0)
     parser.add_argument("--request-delay", type=float, default=1.0)
@@ -481,6 +681,9 @@ def parse_args() -> argparse.Namespace:
         "--state", type=Path, default=Path("data/raw/scrape_state.json")
     )
     parser.add_argument("--log", type=Path, default=Path("logs/scraper.log"))
+    parser.add_argument(
+        "--failures", type=Path, default=Path("logs/failed_decisions.jsonl")
+    )
     return parser.parse_args()
 
 
@@ -496,13 +699,17 @@ def main() -> None:
         output_path=args.output,
         state_path=args.state,
         logger=logger,
+        failure_path=args.failures,
+        continue_on_error=args.continue_on_error,
+        target_count=args.target_count,
         attempts=args.attempts,
         retry_delay=args.retry_delay,
         request_delay=args.request_delay,
     )
     print(
         f"Last completed page: {state['last_completed_page']}; "
-        f"total saved: {state['total_saved']}"
+        f"total saved: {state['total_saved']}; "
+        f"total failed: {state['total_failed']}"
     )
 
 

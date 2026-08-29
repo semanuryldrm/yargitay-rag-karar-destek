@@ -19,6 +19,10 @@ class YargitayClientError(RuntimeError):
     """Raised when an endpoint cannot be reached or returns invalid data."""
 
 
+class YargitayAccessBlockedError(YargitayClientError):
+    """Raised when the service explicitly requires interactive access."""
+
+
 @dataclass(slots=True)
 class YargitayClient:
     base_url: str = BASE_URL
@@ -124,6 +128,10 @@ class YargitayClient:
         if result.get("data") is None and isinstance(metadata, dict):
             code = metadata.get("FMC", "UNKNOWN_SERVICE_ERROR")
             message = metadata.get("FMTE", "No error message")
+            if "displaycaptcha" in str(message).casefold():
+                raise YargitayAccessBlockedError(
+                    "Yargitay service requires an interactive CAPTCHA"
+                )
             raise YargitayClientError(f"Yargitay service error {code}: {message}")
         return result
 

@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from yargitay_client import YargitayClient, YargitayClientError
+from yargitay_client import (
+    YargitayAccessBlockedError,
+    YargitayClient,
+    YargitayClientError,
+)
 
 
 class FakeResponse:
@@ -73,6 +77,22 @@ class YargitayClientTests(unittest.TestCase):
         )
         with patch.object(client._opener, "open", return_value=response):
             with self.assertRaisesRegex(YargitayClientError, "ADALET_RUNTIME_EXCEPTION"):
+                client.get_decision("123")
+
+    def test_surfaces_captcha_as_access_block(self):
+        client = YargitayClient()
+        client._session_ready = True
+        response = FakeResponse(
+            {
+                "data": None,
+                "metadata": {
+                    "FMC": "ADALET_RUNTIME_EXCEPTION",
+                    "FMTE": "Runtime exception:{0}:DisplayCaptcha",
+                },
+            }
+        )
+        with patch.object(client._opener, "open", return_value=response):
+            with self.assertRaisesRegex(YargitayAccessBlockedError, "CAPTCHA"):
                 client.get_decision("123")
 
 

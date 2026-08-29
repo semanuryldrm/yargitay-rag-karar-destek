@@ -108,7 +108,17 @@ class ScraperResilienceTests(unittest.TestCase):
             )
             state_path = root / "state.json"
             state_path.write_text(
-                json.dumps({"last_completed_page": 1, "total_saved": 1}),
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "start_date": "01.01.2025",
+                        "end_date": "01.12.2025",
+                        "page_size": 2,
+                        "last_completed_page": 1,
+                        "total_saved": 1,
+                        "total_failed": 0,
+                    }
+                ),
                 encoding="utf-8",
             )
             client = ResilientFakeClient({2: [summary(20), summary(21)]})
@@ -129,7 +139,9 @@ class ScraperResilienceTests(unittest.TestCase):
         self.assertEqual(client.list_pages, [2])
         self.assertEqual(client.detail_ids, ["21"])
         self.assertEqual(ids, ["20", "21"])
-        self.assertEqual(state, {"last_completed_page": 2, "total_saved": 2})
+        self.assertEqual(state["last_completed_page"], 2)
+        self.assertEqual(state["total_saved"], 2)
+        self.assertEqual(state["total_failed"], 0)
 
     def test_run_retries_list_and_detail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -191,7 +203,17 @@ class ScraperResilienceTests(unittest.TestCase):
             )
             state_path = root / "state.json"
             state_path.write_text(
-                json.dumps({"last_completed_page": 1, "total_saved": 2}),
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "start_date": "01.01.2025",
+                        "end_date": "01.12.2025",
+                        "page_size": 1,
+                        "last_completed_page": 1,
+                        "total_saved": 2,
+                        "total_failed": 0,
+                    }
+                ),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(DecisionDataError, "does not match"):

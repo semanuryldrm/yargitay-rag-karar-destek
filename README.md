@@ -63,6 +63,20 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Veri çekme akışına yeniden deneme, kontrollü bekleme, loglama, tekrar kayıt engelleme ve kaldığı yerden devam özellikleri eklendi.
 - Farklı sayfalardaki Hukuk ve Ceza Dairesi kararlarıyla veri kalitesi testleri yapıldı; metadata alanları standartlaştırıldı ve `karar_turu` alanı eklendi.
 - Eksik alan, kısa/boş sayfa, HTML olmayan veya görünür metni bulunmayan detay, bozuk UTF-8 ve bağlantı kesintisi senaryolarına karşı doğrulamalar geliştirildi.
+- Toplu çekim için hedef kayıt sayısı, kalıcı başarı/başarısızlık sayaçları, hata günlüğü, sorgu yapılandırmalı devam dosyası, uyarlanabilir hız sınırı beklemesi ve CAPTCHA'da güvenli duruş eklendi.
+- Resmî servisteki hız sınırı ve CAPTCHA engeli aşılmadan durduruldu; kullanıcı onayıyla CC BY 4.0 lisanslı TurkLegalBench corpusundaki 15.000 benzersiz Yargıtay kaydı kaynak bilgileri korunarak yerel ham veri biçimine aktarıldı.
+
+## Toplu Veri Kaynağı
+
+Projede doğrudan Yargıtay servisinden alınmış küçük doğrulama örnekleri ile haricî toplu corpus birbirinden ayrı tutulmaktadır. Toplu corpus [IremTRNL/TurkLegalBench](https://huggingface.co/datasets/IremTRNL/TurkLegalBench) kaynağından alınmıştır ve CC BY 4.0 lisansına tabidir. Her dönüştürülmüş kayıtta kaynak adı, bağlantısı, lisansı ve kaynak kayıt kimliği bulunmaktadır.
+
+TurkLegalBench dosyası düz metin sunmaktadır; bu nedenle kayıtlar resmî servisten gelen `karar_html` alanına dönüştürülmemiş, `karar_metni` alanında saklanmıştır. 15.000 metnin 8.355'i kaynakta tam olarak 2.000 karakter uzunluğundadır ve bazıları cümle ortasında bitmektedir. Bu kayıtlar tam karar metni olarak varsayılmamalı; `metin_2000_karakter_sinirinda` alanı sonraki işleme aşamalarında dikkate alınmalıdır. Ayrıntılar `docs/gun9_toplu_veri_kumesi.md` dosyasındadır.
+
+Kaynak corpusu indirip dosya karmasını doğrulamak ve 15.000 kaydı yeniden oluşturmak için:
+
+```powershell
+python scripts/import_turklegalbench.py --download
+```
 
 ## Uyarı
 

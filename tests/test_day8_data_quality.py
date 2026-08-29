@@ -194,7 +194,9 @@ class Day8DataQualityTests(unittest.TestCase):
                 retry_delay=0,
                 sleep_fn=lambda _seconds: None,
             )
-        self.assertEqual(state, {"last_completed_page": 0, "total_saved": 0})
+        self.assertEqual(state["last_completed_page"], 0)
+        self.assertEqual(state["total_saved"], 0)
+        self.assertEqual(state["total_failed"], 0)
 
     def test_scraper_retries_temporarily_malformed_detail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -216,7 +218,9 @@ class Day8DataQualityTests(unittest.TestCase):
             )
         self.assertEqual(client.detail_calls, 2)
         self.assertEqual(client.reset_count, 1)
-        self.assertEqual(state, {"last_completed_page": 1, "total_saved": 1})
+        self.assertEqual(state["last_completed_page"], 1)
+        self.assertEqual(state["total_saved"], 1)
+        self.assertEqual(state["total_failed"], 0)
 
 
 if __name__ == "__main__":
