@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import time
+import unicodedata
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Protocol, TypeVar, TypedDict
 
@@ -19,6 +22,7 @@ class DecisionDataError(RuntimeError):
 class DecisionRecord(TypedDict):
     id: str
     daire: str
+    karar_turu: str
     esas_no: str
     karar_no: str
     karar_tarihi: str
@@ -55,6 +59,98 @@ LIST_FIELDS = {
 
 T = TypeVar("T")
 LOGGER_NAME = "yargitay_scraper"
+INVALID_TEXT_CHARACTERS = {"\x00", "\ufffd"}
+
+
+class _VisibleTextParser(HTMLParser):
+    """Collect visible text while checking that a detail contains HTML tags."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.saw_tag = False
+        self._ignored_depth = 0
+        self.text_parts: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del attrs
+        self.saw_tag = True
+        if tag.casefold() in {"script", "style"}:
+            self._ignored_depth += 1
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del tag, attrs
+        self.saw_tag = True
+
+    def handle_endtag(self, tag: str) -> None:
+        self.saw_tag = True
+        if tag.casefold() in {"script", "style"} and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth and data.strip():
+            self.text_parts.append(data)
+
+
+def normalize_metadata_value(value: Any, *, field_name: str) -> str:
+    """Normalize harmless whitespace while rejecting missing or corrupt metadata."""
+    if value is None:
+        raise DecisionDataError(f"Decision summary is missing {field_name}")
+    normalized = unicodedata.normalize("NFC", str(value)).replace("\u00a0", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        raise DecisionDataError(f"Decision summary is missing {field_name}")
+    if any(character in normalized for character in INVALID_TEXT_CHARACTERS):
+        raise DecisionDataError(f"Decision summary has invalid characters in {field_name}")
+    if any(unicodedata.category(character) == "Cc" for character in normalized):
+        raise DecisionDataError(f"Decision summary has control characters in {field_name}")
+    return normalized
+
+
+def classify_decision_type(daire: str) -> str:
+    """Derive a stable high-level decision type from the chamber name."""
+    normalized = daire.casefold()
+    if "kurul" in normalized:
+        return "kurul"
+    if "ceza" in normalized:
+        return "ceza"
+    if "hukuk" in normalized:
+        return "hukuk"
+    return "diger"
+
+
+def normalize_decision_summary(summary: dict[str, Any]) -> dict[str, str]:
+    record: dict[str, str] = {}
+    for source_name, target_name in LIST_FIELDS.items():
+        record[target_name] = normalize_metadata_value(
+            summary.get(source_name), field_name=source_name
+        )
+    record["karar_turu"] = classify_decision_type(record["daire"])
+    return record
+
+
+def validate_detail_html(value: Any, *, decision_id: str) -> str:
+    """Reject empty, non-HTML, invisible, or character-corrupted detail content."""
+    if not isinstance(value, str) or not value.strip():
+        raise DecisionDataError(f"Decision {decision_id} has no detail HTML")
+    if any(character in value for character in INVALID_TEXT_CHARACTERS):
+        raise DecisionDataError(f"Decision {decision_id} detail has invalid characters")
+
+    parser = _VisibleTextParser()
+    try:
+        parser.feed(value)
+        parser.close()
+    except (UnicodeError, ValueError) as exc:
+        raise DecisionDataError(f"Decision {decision_id} detail HTML is malformed") from exc
+    visible_text = " ".join(parser.text_parts).strip()
+    if not parser.saw_tag:
+        raise DecisionDataError(f"Decision {decision_id} detail is not HTML")
+    if not visible_text:
+        raise DecisionDataError(f"Decision {decision_id} detail has no visible text")
+    return value
 
 
 def extract_list_items(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -64,23 +160,56 @@ def extract_list_items(response: dict[str, Any]) -> list[dict[str, Any]]:
     items = container.get("data")
     if not isinstance(items, list):
         raise DecisionDataError("List response data field is not a list")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise DecisionDataError(f"List record {index} is not an object")
+    return items
+
+
+def extract_validated_list_page(
+    response: dict[str, Any], *, page_number: int, page_size: int
+) -> list[dict[str, Any]]:
+    """Validate list shape, required fields, and terminal partial-page size."""
+    items = extract_list_items(response)
+    if len(items) > page_size:
+        raise DecisionDataError(
+            f"Expected at most {page_size} list records, received {len(items)}"
+        )
+
+    if len(items) != page_size:
+        container = response["data"]
+        filtered_value = container.get("recordsFiltered")
+        try:
+            records_filtered = int(filtered_value)
+        except (TypeError, ValueError) as exc:
+            raise DecisionDataError(
+                f"Expected {page_size} list records, received {len(items)}"
+            ) from exc
+        if records_filtered < 0:
+            raise DecisionDataError("recordsFiltered cannot be negative")
+        first_index = (page_number - 1) * page_size
+        expected_count = min(page_size, max(records_filtered - first_index, 0))
+        if len(items) != expected_count:
+            raise DecisionDataError(
+                f"Expected {expected_count} terminal-page records, received {len(items)}"
+            )
+
+    for summary in items:
+        normalize_decision_summary(summary)
     return items
 
 
 def build_decision_record(
     summary: dict[str, Any], detail_response: dict[str, Any]
 ) -> DecisionRecord:
-    record: dict[str, str] = {}
-    for source_name, target_name in LIST_FIELDS.items():
-        value = summary.get(source_name)
-        if value is None or not str(value).strip():
-            raise DecisionDataError(f"Decision summary is missing {source_name}")
-        record[target_name] = str(value).strip()
-
-    html = detail_response.get("data")
-    if not isinstance(html, str) or not html.strip():
-        raise DecisionDataError(f"Decision {record['id']} has no detail HTML")
-    record["karar_html"] = html
+    if not isinstance(summary, dict):
+        raise DecisionDataError("Decision summary is not an object")
+    if not isinstance(detail_response, dict):
+        raise DecisionDataError("Decision detail response is not an object")
+    record = normalize_decision_summary(summary)
+    record["karar_html"] = validate_detail_html(
+        detail_response.get("data"), decision_id=record["id"]
+    )
     return DecisionRecord(**record)
 
 
@@ -98,11 +227,9 @@ def fetch_decision_page(
         page_number=page_number,
         page_size=page_size,
     )
-    summaries = extract_list_items(list_response)
-    if len(summaries) != page_size:
-        raise DecisionDataError(
-            f"Expected {page_size} list records, received {len(summaries)}"
-        )
+    summaries = extract_validated_list_page(
+        list_response, page_number=page_number, page_size=page_size
+    )
 
     records: list[DecisionRecord] = []
     for summary in summaries:
@@ -132,22 +259,25 @@ def load_existing_ids(output_path: Path) -> set[str]:
     if not output_path.exists():
         return set()
     decision_ids: set[str] = set()
-    with output_path.open("r", encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, start=1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise DecisionDataError(
-                    f"Invalid JSONL at {output_path}:{line_number}"
-                ) from exc
-            decision_id = record.get("id") if isinstance(record, dict) else None
-            if decision_id is None or not str(decision_id).strip():
-                raise DecisionDataError(
-                    f"Missing decision id at {output_path}:{line_number}"
-                )
-            decision_ids.add(str(decision_id))
+    try:
+        with output_path.open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise DecisionDataError(
+                        f"Invalid JSONL at {output_path}:{line_number}"
+                    ) from exc
+                decision_id = record.get("id") if isinstance(record, dict) else None
+                if decision_id is None or not str(decision_id).strip():
+                    raise DecisionDataError(
+                        f"Missing decision id at {output_path}:{line_number}"
+                    )
+                decision_ids.add(str(decision_id))
+    except UnicodeDecodeError as exc:
+        raise DecisionDataError(f"JSONL is not valid UTF-8: {output_path}") from exc
     return decision_ids
 
 
@@ -156,7 +286,7 @@ def load_state(state_path: Path) -> ScrapeState:
         return ScrapeState(last_completed_page=0, total_saved=0)
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DecisionDataError(f"Invalid state JSON: {state_path}") from exc
     if not isinstance(state, dict):
         raise DecisionDataError("Scrape state root must be an object")
@@ -272,12 +402,9 @@ def run_scraper(
                 page_number=page_number,
                 page_size=page_size,
             )
-            page_summaries = extract_list_items(list_response)
-            if len(page_summaries) != page_size:
-                raise DecisionDataError(
-                    f"Expected {page_size} list records, received {len(page_summaries)}"
-                )
-            return page_summaries
+            return extract_validated_list_page(
+                list_response, page_number=page_number, page_size=page_size
+            )
 
         summaries = retry_call(
             fetch_summaries,
@@ -288,6 +415,9 @@ def run_scraper(
             sleep_fn=sleep_fn,
             on_retry=client.reset_session,
         )
+        if not summaries:
+            logger.info("No records remain at page %s; stopping", page_number)
+            break
 
         page_records: list[DecisionRecord] = []
         page_ids: set[str] = set()

@@ -61,6 +61,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - En fazla 10 kararlık örnek JSONL üretme komutu ve HTTP istemcisi hazırlandı.
 - Liste ve detay cevaplarını doğrulayıp standart ham karar kaydına dönüştüren bir sayfalık veri çekme modülü geliştirildi.
 - Veri çekme akışına yeniden deneme, kontrollü bekleme, loglama, tekrar kayıt engelleme ve kaldığı yerden devam özellikleri eklendi.
+- Farklı sayfalardaki Hukuk ve Ceza Dairesi kararlarıyla veri kalitesi testleri yapıldı; metadata alanları standartlaştırıldı ve `karar_turu` alanı eklendi.
+- Eksik alan, kısa/boş sayfa, HTML olmayan veya görünür metni bulunmayan detay, bozuk UTF-8 ve bağlantı kesintisi senaryolarına karşı doğrulamalar geliştirildi.
 
 ## Uyarı
 

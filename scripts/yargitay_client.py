@@ -12,6 +12,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 
 BASE_URL = "https://karararama.yargitay.gov.tr"
+NETWORK_ERRORS = (HTTPError, URLError, TimeoutError, ConnectionError, OSError)
 
 
 class YargitayClientError(RuntimeError):
@@ -106,13 +107,15 @@ class YargitayClient:
             with self._opener.open(request, timeout=self.timeout) as response:
                 status = getattr(response, "status", 200)
                 raw = response.read()
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except NETWORK_ERRORS as exc:
             raise YargitayClientError(f"Yargitay request failed: {exc}") from exc
 
         if status != 200:
             raise YargitayClientError(f"Unexpected HTTP status: {status}")
         try:
-            result = json.loads(raw.decode("utf-8"))
+            # ``utf-8-sig`` remains strict UTF-8 while also accepting an optional
+            # byte-order mark that some HTTP intermediaries may prepend.
+            result = json.loads(raw.decode("utf-8-sig"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise YargitayClientError("Response is not valid UTF-8 JSON") from exc
         if not isinstance(result, dict):
@@ -147,7 +150,7 @@ class YargitayClient:
             with self._opener.open(request, timeout=self.timeout) as response:
                 status = getattr(response, "status", 200)
                 raw = response.read()
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except NETWORK_ERRORS as exc:
             raise YargitayClientError(f"Could not prepare Yargitay search: {exc}") from exc
         if status != 200:
             raise YargitayClientError(f"Search preparation returned HTTP {status}")
@@ -163,6 +166,6 @@ class YargitayClient:
         try:
             with self._opener.open(request, timeout=self.timeout) as response:
                 response.read()
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except NETWORK_ERRORS as exc:
             raise YargitayClientError(f"Could not start Yargitay session: {exc}") from exc
         self._session_ready = True
