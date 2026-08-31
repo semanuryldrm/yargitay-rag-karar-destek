@@ -67,6 +67,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Resmî servisteki hız sınırı ve CAPTCHA engeli aşılmadan durduruldu; kullanıcı onayıyla CC BY 4.0 lisanslı TurkLegalBench corpusundaki 15.000 benzersiz Yargıtay kaydı kaynak bilgileri korunarak yerel ham veri biçimine aktarıldı.
 - Ham veri kümesi temizlenip standartlaştırıldı; aynı daire-esas-karar kimliğine sahip 130 mükerrer kayıt denetim iziyle ayrıldı ve 14.870 kayıtlık temiz corpus oluşturuldu.
 - Eksik metadata, kaynakta 2.000 karakterle sınırlı metin ve farklı kararlarda tekrarlanan metinler silinmeden kalite uyarılarıyla görünür hâle getirildi.
+- Karar uzunlukları, paragraf yapıları ve yaygın hukuki bölüm başlıkları analiz edildi; paragraf ve cümle sınırlarını önceleyen hibrit chunking modülü geliştirildi.
+- 14.870 temiz karar, varsayılan 1.200 karakter ve 200 karakter hedef örtüşme ayarıyla 31.544 bütünlüğü doğrulanmış parçaya ayrıldı.
 
 ## Toplu Veri Kaynağı
 
@@ -91,6 +93,18 @@ python scripts/clean_yargitay_data.py
 İşlem UTF-8/JSON ve zorunlu alan doğrulaması yapar; HTML kalıntılarını, HTML karakter referanslarını, Unicode özel boşluklarını, gereksiz yatay boşlukları ve kaynak başındaki hatalı tırnağı temizler; metinleri Unicode NFC biçimine getirir. Mükerrerlik yalnızca `daire`, `esas_no` ve `karar_no` üçlüsü aynı olduğunda uygulanır. Aynı metne sahip farklı kararlar hukuken ayrı kayıt olabilecekleri için korunur ve kalite uyarısıyla işaretlenir.
 
 Yerel olarak üretilen `data/processed/yargitay_clean_14870.jsonl` dosyasında 14.870 benzersiz karar kaydı bulunmaktadır. Temiz corpus, mükerrer kayıt denetimi ve istatistik dosyaları büyük/türetilmiş veri oldukları için Git'e eklenmez. Yöntem ve doğrulama sonuçları `docs/gun10_veri_temizleme_ve_butunluk.md` dosyasındadır.
+
+## Karar Metinlerini Parçalama
+
+Temiz corpus aşağıdaki komutla RAG sistemine uygun parçalara ayrılabilir:
+
+```powershell
+python scripts/chunk_yargitay_data.py
+```
+
+Varsayılan yöntem en fazla 1.200 karakterlik parçalar üretir ve parçalar arasında 200 karakter civarında bağlam örtüşmesi hedefler. Önce paragraf ve cümle sonları, bunlar yeterli olmadığında kelime sınırları kullanılır; yalnızca kesintisiz çok uzun bir metinde zorunlu karakter sınırına düşülür. Her parçanın kaynak kararı, sırası, karakter aralığı, metin karması, bölüm işaretleri ve tüm karar metadata'sı korunur.
+
+Yerel `data/processed/yargitay_chunks_1200_200.jsonl` çıktısında 31.544 parça bulunmaktadır. 1.200/200 ayarı ilk güvenli temel yapılandırmadır; farklı parça boyutu ve örtüşme seçeneklerinin karşılaştırılması 12. gün çalışmasıdır. Ayrıntılar `docs/gun11_karar_metinlerini_parcalama.md` dosyasındadır.
 
 ## Uyarı
 
