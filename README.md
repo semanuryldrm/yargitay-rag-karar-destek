@@ -65,6 +65,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Eksik alan, kısa/boş sayfa, HTML olmayan veya görünür metni bulunmayan detay, bozuk UTF-8 ve bağlantı kesintisi senaryolarına karşı doğrulamalar geliştirildi.
 - Toplu çekim için hedef kayıt sayısı, kalıcı başarı/başarısızlık sayaçları, hata günlüğü, sorgu yapılandırmalı devam dosyası, uyarlanabilir hız sınırı beklemesi ve CAPTCHA'da güvenli duruş eklendi.
 - Resmî servisteki hız sınırı ve CAPTCHA engeli aşılmadan durduruldu; kullanıcı onayıyla CC BY 4.0 lisanslı TurkLegalBench corpusundaki 15.000 benzersiz Yargıtay kaydı kaynak bilgileri korunarak yerel ham veri biçimine aktarıldı.
+- Ham veri kümesi temizlenip standartlaştırıldı; aynı daire-esas-karar kimliğine sahip 130 mükerrer kayıt denetim iziyle ayrıldı ve 14.870 kayıtlık temiz corpus oluşturuldu.
+- Eksik metadata, kaynakta 2.000 karakterle sınırlı metin ve farklı kararlarda tekrarlanan metinler silinmeden kalite uyarılarıyla görünür hâle getirildi.
 
 ## Toplu Veri Kaynağı
 
@@ -77,6 +79,18 @@ Kaynak corpusu indirip dosya karmasını doğrulamak ve 15.000 kaydı yeniden ol
 ```powershell
 python scripts/import_turklegalbench.py --download
 ```
+
+## Veri Temizleme
+
+Ham corpus aşağıdaki komutla temizlenebilir ve veri bütünlüğü çıktıları yeniden üretilebilir:
+
+```powershell
+python scripts/clean_yargitay_data.py
+```
+
+İşlem UTF-8/JSON ve zorunlu alan doğrulaması yapar; HTML kalıntılarını, HTML karakter referanslarını, Unicode özel boşluklarını, gereksiz yatay boşlukları ve kaynak başındaki hatalı tırnağı temizler; metinleri Unicode NFC biçimine getirir. Mükerrerlik yalnızca `daire`, `esas_no` ve `karar_no` üçlüsü aynı olduğunda uygulanır. Aynı metne sahip farklı kararlar hukuken ayrı kayıt olabilecekleri için korunur ve kalite uyarısıyla işaretlenir.
+
+Yerel olarak üretilen `data/processed/yargitay_clean_14870.jsonl` dosyasında 14.870 benzersiz karar kaydı bulunmaktadır. Temiz corpus, mükerrer kayıt denetimi ve istatistik dosyaları büyük/türetilmiş veri oldukları için Git'e eklenmez. Yöntem ve doğrulama sonuçları `docs/gun10_veri_temizleme_ve_butunluk.md` dosyasındadır.
 
 ## Uyarı
 

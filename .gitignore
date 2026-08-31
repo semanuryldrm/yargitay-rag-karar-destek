@@ -7,5 +7,7 @@ data/raw/decisions.jsonl
 data/raw/scrape_state.json
 data/raw/yargitay_*.jsonl
 data/raw/yargitay_*_state.json
+data/processed/yargitay_*.jsonl
+data/processed/yargitay_*_stats.json
 logs/*.log
 logs/*.jsonl
