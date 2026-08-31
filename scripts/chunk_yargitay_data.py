@@ -363,6 +363,92 @@ def _validate_record(raw_record: Any, line_number: int) -> dict[str, Any]:
     return record
 
 
+def chunk_decision_record(
+    raw_record: dict[str, Any],
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    overlap: int = DEFAULT_OVERLAP,
+    min_chunk_size: int = DEFAULT_MIN_CHUNK_SIZE,
+) -> list[dict[str, Any]]:
+    """Chunk one cleaned decision and preserve its source relationship metadata."""
+    record = _validate_record(raw_record, 1)
+    decision_chunks = chunk_text(
+        record["karar_metni"],
+        chunk_size=chunk_size,
+        overlap=overlap,
+        min_chunk_size=min_chunk_size,
+    )
+    output_records: list[dict[str, Any]] = []
+    for chunk_index, chunk in enumerate(decision_chunks, start=1):
+        output_record = {
+            key: value
+            for key, value in record.items()
+            if key not in {"id", "karar_metni"}
+        }
+        output_record.update(
+            {
+                "id": f"{record['id']}:c{chunk_index:04d}",
+                "karar_id": record["id"],
+                "chunk_sirasi": chunk_index,
+                "toplam_chunk": len(decision_chunks),
+                "chunk_metni": chunk.text,
+                "chunk_metni_sha256": hashlib.sha256(
+                    chunk.text.encode("utf-8")
+                ).hexdigest(),
+                "baslangic_karakteri": chunk.start,
+                "bitis_karakteri": chunk.end,
+                "karakter_sayisi": len(chunk.text),
+                "onceki_chunk_ortusme_karakteri": (
+                    chunk.overlap_with_previous
+                ),
+                "bitis_siniri": chunk.end_boundary_kind,
+                "bolum_isaretleri": list(chunk.section_markers),
+                "chunking_surum": CHUNKING_VERSION,
+                "chunk_boyutu_karakter": chunk_size,
+                "hedef_ortusme_karakter": overlap,
+            }
+        )
+        output_records.append(output_record)
+    return output_records
+
+
+def load_cleaned_records(
+    input_path: Path, *, expected_count: int | None = None
+) -> list[dict[str, Any]]:
+    """Load and validate a cleaned JSONL corpus before downstream processing."""
+    if not input_path.is_file():
+        raise ChunkingError(f"Input JSONL does not exist: {input_path}")
+
+    records: list[dict[str, Any]] = []
+    decision_ids: set[str] = set()
+    try:
+        with input_path.open("r", encoding="utf-8") as source:
+            for line_number, line in enumerate(source, start=1):
+                if not line.strip():
+                    raise ChunkingError(f"Blank JSONL line at {line_number}")
+                try:
+                    raw_record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ChunkingError(
+                        f"Invalid JSON at line {line_number}: {exc.msg}"
+                    ) from exc
+                record = _validate_record(raw_record, line_number)
+                if record["id"] in decision_ids:
+                    raise ChunkingError(
+                        f"Duplicate decision id at line {line_number}: {record['id']}"
+                    )
+                decision_ids.add(record["id"])
+                records.append(record)
+    except UnicodeDecodeError as exc:
+        raise ChunkingError("Input JSONL is not valid UTF-8") from exc
+
+    if expected_count is not None and len(records) != expected_count:
+        raise ChunkingError(
+            f"Record count mismatch: expected {expected_count}, got {len(records)}"
+        )
+    return records
+
+
 def _numeric_summary(values: list[int]) -> dict[str, float | int]:
     if not values:
         return {
@@ -407,36 +493,8 @@ def chunk_corpus(
     progress_callback: Callable[[int], None] | None = None,
 ) -> ChunkingStats:
     _validate_configuration(chunk_size, overlap, min_chunk_size)
-    if not input_path.is_file():
-        raise ChunkingError(f"Input JSONL does not exist: {input_path}")
-
-    records: list[dict[str, Any]] = []
-    decision_ids: set[str] = set()
-    try:
-        with input_path.open("r", encoding="utf-8") as source:
-            for line_number, line in enumerate(source, start=1):
-                if not line.strip():
-                    raise ChunkingError(f"Blank JSONL line at {line_number}")
-                try:
-                    raw_record = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ChunkingError(
-                        f"Invalid JSON at line {line_number}: {exc.msg}"
-                    ) from exc
-                record = _validate_record(raw_record, line_number)
-                if record["id"] in decision_ids:
-                    raise ChunkingError(
-                        f"Duplicate decision id at line {line_number}: {record['id']}"
-                    )
-                decision_ids.add(record["id"])
-                records.append(record)
-    except UnicodeDecodeError as exc:
-        raise ChunkingError("Input JSONL is not valid UTF-8") from exc
-
-    if expected_count is not None and len(records) != expected_count:
-        raise ChunkingError(
-            f"Record count mismatch: expected {expected_count}, got {len(records)}"
-        )
+    records = load_cleaned_records(input_path, expected_count=expected_count)
+    decision_ids = {record["id"] for record in records}
 
     output_records: list[dict[str, Any]] = []
     chunks_per_decision: list[int] = []
@@ -450,8 +508,8 @@ def chunk_corpus(
 
     for record_number, record in enumerate(records, start=1):
         text = record["karar_metni"]
-        decision_chunks = chunk_text(
-            text,
+        decision_chunks = chunk_decision_record(
+            record,
             chunk_size=chunk_size,
             overlap=overlap,
             min_chunk_size=min_chunk_size,
@@ -461,43 +519,17 @@ def chunk_corpus(
         section_record_counts.update(detect_section_markers(text))
         chunks_per_decision.append(len(decision_chunks))
         for chunk_index, chunk in enumerate(decision_chunks, start=1):
-            chunk_id = f"{record['id']}:c{chunk_index:04d}"
+            chunk_id = chunk["id"]
             if chunk_id in chunk_ids:
                 raise ChunkingError(f"Duplicate chunk id generated: {chunk_id}")
             chunk_ids.add(chunk_id)
-            output_record = {
-                key: value
-                for key, value in record.items()
-                if key not in {"id", "karar_metni"}
-            }
-            output_record.update(
-                {
-                    "id": chunk_id,
-                    "karar_id": record["id"],
-                    "chunk_sirasi": chunk_index,
-                    "toplam_chunk": len(decision_chunks),
-                    "chunk_metni": chunk.text,
-                    "chunk_metni_sha256": hashlib.sha256(
-                        chunk.text.encode("utf-8")
-                    ).hexdigest(),
-                    "baslangic_karakteri": chunk.start,
-                    "bitis_karakteri": chunk.end,
-                    "karakter_sayisi": len(chunk.text),
-                    "onceki_chunk_ortusme_karakteri": (
-                        chunk.overlap_with_previous
-                    ),
-                    "bitis_siniri": chunk.end_boundary_kind,
-                    "bolum_isaretleri": list(chunk.section_markers),
-                    "chunking_surum": CHUNKING_VERSION,
-                    "chunk_boyutu_karakter": chunk_size,
-                    "hedef_ortusme_karakter": overlap,
-                }
-            )
-            output_records.append(output_record)
-            chunk_lengths.append(len(chunk.text))
+            output_records.append(chunk)
+            chunk_lengths.append(chunk["karakter_sayisi"])
             if chunk_index > 1:
-                overlap_lengths.append(chunk.overlap_with_previous)
-            boundary_counts[chunk.end_boundary_kind] += 1
+                overlap_lengths.append(
+                    chunk["onceki_chunk_ortusme_karakteri"]
+                )
+            boundary_counts[chunk["bitis_siniri"]] += 1
         if (
             progress_callback is not None
             and progress_interval > 0

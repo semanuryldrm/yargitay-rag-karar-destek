@@ -69,6 +69,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Eksik metadata, kaynakta 2.000 karakterle sınırlı metin ve farklı kararlarda tekrarlanan metinler silinmeden kalite uyarılarıyla görünür hâle getirildi.
 - Karar uzunlukları, paragraf yapıları ve yaygın hukuki bölüm başlıkları analiz edildi; paragraf ve cümle sınırlarını önceleyen hibrit chunking modülü geliştirildi.
 - 14.870 temiz karar, varsayılan 1.200 karakter ve 200 karakter hedef örtüşme ayarıyla 31.544 bütünlüğü doğrulanmış parçaya ayrıldı.
+- Kısa, orta, uzun ve çok uzun metinlerden seçilen 24 temsilî kararda dokuz chunk boyutu/örtüşme yapılandırması karşılaştırıldı; kaynak metadata ve metin bağlantısı bütün yapılandırmalarda doğrulandı.
+- 1.200 karakter ve 200 karakter hedef örtüşme ayarı, arama ayrıntısı, yapısal sınır koruması ve tekrar yükü arasındaki denge nedeniyle sonraki aşamalar için korundu.
 
 ## Toplu Veri Kaynağı
 
@@ -104,7 +106,19 @@ python scripts/chunk_yargitay_data.py
 
 Varsayılan yöntem en fazla 1.200 karakterlik parçalar üretir ve parçalar arasında 200 karakter civarında bağlam örtüşmesi hedefler. Önce paragraf ve cümle sonları, bunlar yeterli olmadığında kelime sınırları kullanılır; yalnızca kesintisiz çok uzun bir metinde zorunlu karakter sınırına düşülür. Her parçanın kaynak kararı, sırası, karakter aralığı, metin karması, bölüm işaretleri ve tüm karar metadata'sı korunur.
 
-Yerel `data/processed/yargitay_chunks_1200_200.jsonl` çıktısında 31.544 parça bulunmaktadır. 1.200/200 ayarı ilk güvenli temel yapılandırmadır; farklı parça boyutu ve örtüşme seçeneklerinin karşılaştırılması 12. gün çalışmasıdır. Ayrıntılar `docs/gun11_karar_metinlerini_parcalama.md` dosyasındadır.
+Yerel `data/processed/yargitay_chunks_1200_200.jsonl` çıktısında 31.544 parça bulunmaktadır. Yöntemin geliştirilmesi ve corpus sonuçları `docs/gun11_karar_metinlerini_parcalama.md` dosyasındadır.
+
+## Chunking Yapılandırması Karşılaştırması
+
+Farklı chunk boyutu ve hedef örtüşme değerleri aşağıdaki komutla karşılaştırılabilir:
+
+```powershell
+python scripts/compare_chunking_configs.py
+```
+
+Araç, temiz corpus içinden kısa, orta, uzun ve çok uzun metin gruplarından deterministik örnekler seçer. Karar türü çeşitliliğini koruyarak 24 örnek üzerinde 800, 1.200 ve 1.600 karakterlik chunk boyutlarını; 100, 200 ve 300 karakterlik hedef örtüşmelerle çapraz karşılaştırır. Her yapılandırmada parça sayısı, uzunluk dağılımı, gerçek örtüşme, paragraf/cümle sınırı oranı ve tekrar kapsama yükü ölçülür.
+
+Karşılaştırmada 1.200/200 ayarı; 949 karakterlik medyan parça uzunluğu, yüzde 92,11 paragraf/cümle sınırı oranı ve yüzde 13,41 tekrar kapsama yüküyle dengeli sonuç vermiştir. 800 karakterlik seçenekler fazla parçalanma ve daha yüksek tekrar yükü oluştururken, 1.600 karakterlik seçenekler örneklerin çoğunu tek parçada bırakarak semantik arama ayrıntısını azaltmıştır. Daire, esas numarası, karar numarası, tarih, kaynak metin karması ve kesin karakter aralıkları bütün yapılandırmalarda doğrulanmıştır. Ayrıntılar `docs/gun12_chunking_yapilandirma_karsilastirmasi.md` dosyasındadır.
 
 ## Uyarı
 
