@@ -50,9 +50,6 @@ REQUIRED_CHUNK_STRING_FIELDS = (
     "karar_id",
     "daire",
     "karar_turu",
-    "esas_no",
-    "karar_no",
-    "karar_tarihi",
     "baslik",
     "chunk_metni",
     "chunk_metni_sha256",
@@ -61,6 +58,12 @@ REQUIRED_CHUNK_STRING_FIELDS = (
     "kaynak_url",
     "kaynak_lisans",
     "kaynak_kayit_id",
+)
+
+OPTIONAL_CHUNK_STRING_FIELDS = (
+    "esas_no",
+    "karar_no",
+    "karar_tarihi",
 )
 
 
@@ -122,6 +125,12 @@ def build_chunk_payload(
         value = chunk.get(field)
         if not isinstance(value, str) or not value.strip():
             raise VectorStoreError(f"Chunk field {field!r} is empty or not text")
+    for field in OPTIONAL_CHUNK_STRING_FIELDS:
+        value = chunk.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise VectorStoreError(
+                f"Optional chunk field {field!r} is neither null nor non-empty text"
+            )
 
     chunk_order = chunk.get("chunk_sirasi")
     total_chunks = chunk.get("toplam_chunk")
@@ -161,9 +170,9 @@ def build_chunk_payload(
         "toplam_chunk": total_chunks,
         "daire": chunk["daire"],
         "karar_turu": chunk["karar_turu"],
-        "esas_no": chunk["esas_no"],
-        "karar_no": chunk["karar_no"],
-        "karar_tarihi": chunk["karar_tarihi"],
+        "esas_no": chunk.get("esas_no"),
+        "karar_no": chunk.get("karar_no"),
+        "karar_tarihi": chunk.get("karar_tarihi"),
         "baslik": chunk["baslik"],
         "chunk_metni": text,
         "chunk_metni_sha256": actual_hash,

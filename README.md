@@ -75,6 +75,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Üç hukuki kullanıcı sorgusu ve üç gerçek Yargıtay parçası `text-embedding-embeddinggemma-300m` modeliyle 768 boyutlu vektörlere dönüştürüldü; ilgili parça üç sorgunun tamamında ilk sırada bulundu.
 - Qdrant 1.19.0 yerel kalıcı modda kuruldu; `yargitay_karar_parcalari` koleksiyonu 768 boyut ve Cosine uzaklık yöntemiyle oluşturuldu.
 - Karar bağlantısı, hukuk metadata'sı, kaynak/lisans, veri kalitesi ve embedding bilgilerini kapsayan 22 alanlı payload şeması tanımlandı; gerçek karar parçalarıyla ekleme, okuma, silme, geri yükleme ve benzerlik sorguları doğrulandı.
+- 31.544 temiz karar parçasının tamamı LM Studio ile 128 kayıttan oluşan batch'ler hâlinde vektörleştirilip metadata bilgileriyle Qdrant'a kaydedildi.
+- Toplu indeksleme akışına atomik ilerleme durumu, kaldığı yerden devam, üç denemeli hata yönetimi, başarısız batch günlüğü ve son kayıt sayısı/payload karma doğrulaması eklendi; gerçek çalıştırma 247 batch ve sıfır hatayla tamamlandı.
 
 ## Toplu Veri Kaynağı
 
@@ -152,7 +154,21 @@ python scripts/validate_qdrant_vector_store.py
 
 Araç `data/vector_store/qdrant` altında yerel ve kalıcı Qdrant veritabanını açar. `yargitay_karar_parcalari` koleksiyonunun 768 boyutlu `text-embedding-embeddinggemma-300m` vektörleri ile Cosine uzaklık yöntemini kullandığını doğrular. Koleksiyon veya embedding modeli uyumsuzsa mevcut veriyi sessizce kullanmaz.
 
-Üç gerçek Yargıtay parçası üzerinde upsert, kimlikle okuma, silme ve geri yükleme işlemleri başarıyla doğrulanmıştır. Aynı üç hukuki sorgunun her birinde beklenen karar parçası Qdrant benzerlik aramasında ilk sırada bulunmuştur. Ayrıntılar `docs/gun14_qdrant_vektor_veritabani.md` dosyasındadır. Tam 31.544 parçanın toplu embedding ve kayıt işlemi 15. gün aşamasıdır.
+Üç gerçek Yargıtay parçası üzerinde upsert, kimlikle okuma, silme ve geri yükleme işlemleri başarıyla doğrulanmıştır. Aynı üç hukuki sorgunun her birinde beklenen karar parçası Qdrant benzerlik aramasında ilk sırada bulunmuştur. Ayrıntılar `docs/gun14_qdrant_vektor_veritabani.md` dosyasındadır. Tam 31.544 parçanın toplu embedding ve kayıt işlemi 15. günde tamamlanmıştır.
+
+## Toplu Embedding ve Qdrant İndeksleme
+
+LM Studio embedding modeli çalışırken temizlenmiş karar parçalarının tamamı şu komutla kaldığı yerden devam edebilen batch'ler hâlinde indekslenebilir:
+
+```powershell
+python scripts/index_yargitay_chunks.py
+```
+
+Araç işlem başlamadan önce 31.544 kaynak kaydın UTF-8/JSON biçimini, benzersiz chunk kimliklerini, zorunlu alanlarını, isteğe bağlı hukuki metadata değerlerini, metin uzunluklarını ve SHA-256 karmalarını doğrular. Varsayılan 128 parçalık her batch LM Studio'da vektörleştirilip Qdrant'a yazıldıktan sonra ilerleme durumu atomik olarak kaydedilir. Başarısız bir batch üç kez denenir, her deneme `logs/day15_embedding_failures.jsonl` dosyasına yazılır ve batch atlanmadan işlem durur; sonraki çalıştırma ilk tamamlanmamış satırdan devam eder.
+
+Gerçek çalıştırmada `text-embedding-embeddinggemma-300m` modeliyle 768 boyutlu 31.544 vektör, 247 batch içinde `yargitay_karar_parcalari` koleksiyonuna kaydedildi. İşlem 717,227 saniye sürdü ve saniyede ortalama 43,98 parça işlendi. Başarısız deneme oluşmadı; koleksiyonun kesin kayıt sayısı kaynak sayısıyla eşleşti ve ilk, orta, son örneklerin payload metin karmaları doğrulandı. Kaynakta eksik olan `esas_no`, `karar_no` veya `karar_tarihi` değerleri uydurulmadan `null` olarak, ilgili kalite uyarılarıyla birlikte korundu.
+
+Qdrant istemcisi yerel modda 20.000 üzerindeki koleksiyonlar için performans uyarısı verir. Mevcut 31.544 noktalı geliştirme indeksi doğrulanmış ve kullanılabilir durumdadır; daha yüksek ölçek veya üretim performansı gerektiğinde aynı koleksiyon şemasıyla Qdrant sunucu/Docker moduna geçilmesi değerlendirilmelidir. Ayrıntılar `docs/gun15_toplu_embedding_ve_qdrant_indeksleme.md` dosyasındadır. 16. gün aşaması, kullanıcı sorgusunu embedding'e dönüştüren semantik arama modülünü ve FastAPI bağlantısını geliştirmektir.
 
 ## Uyarı
 

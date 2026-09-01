@@ -170,6 +170,33 @@ class QdrantVectorStoreTests(unittest.TestCase):
         with self.assertRaises(VectorStoreError):
             validate_vector([0.0, 0.0, 0.0], expected_size=3)
 
+    def test_optional_legal_metadata_preserves_null_values(self):
+        self.store.ensure_collection()
+        record = chunk_record("d1:c0001", "Eksik metadata içeren karar metni.")
+        record["esas_no"] = None
+        record["karar_tarihi"] = None
+
+        payload = build_chunk_payload(
+            record,
+            embedding_model="test-embedding-model",
+            vector_size=3,
+        )
+        self.assertIsNone(payload["esas_no"])
+        self.assertIsNone(payload["karar_tarihi"])
+
+        self.store.upsert_chunks([record], [[1.0, 0.0, 0.0]])
+        retrieved = self.store.get_chunk("d1:c0001")
+        self.assertIsNone(retrieved["esas_no"])
+        self.assertIsNone(retrieved["karar_tarihi"])
+
+        invalid = dict(record, karar_no=123)
+        with self.assertRaises(VectorStoreError):
+            build_chunk_payload(
+                invalid,
+                embedding_model="test-embedding-model",
+                vector_size=3,
+            )
+
     def test_point_ids_are_stable_unique_uuids(self):
         first = point_id_for_chunk("d1:c0001")
         self.assertEqual(first, point_id_for_chunk("d1:c0001"))
