@@ -71,6 +71,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - 14.870 temiz karar, varsayılan 1.200 karakter ve 200 karakter hedef örtüşme ayarıyla 31.544 bütünlüğü doğrulanmış parçaya ayrıldı.
 - Kısa, orta, uzun ve çok uzun metinlerden seçilen 24 temsilî kararda dokuz chunk boyutu/örtüşme yapılandırması karşılaştırıldı; kaynak metadata ve metin bağlantısı bütün yapılandırmalarda doğrulandı.
 - 1.200 karakter ve 200 karakter hedef örtüşme ayarı, arama ayrıntısı, yapısal sınır koruması ve tekrar yükü arasındaki denge nedeniyle sonraki aşamalar için korundu.
+- LM Studio için doğrulamalı bir embedding istemcisi ile kosinüs benzerliği ve sıralama yardımcıları geliştirildi.
+- Üç hukuki kullanıcı sorgusu ve üç gerçek Yargıtay parçası `text-embedding-embeddinggemma-300m` modeliyle 768 boyutlu vektörlere dönüştürüldü; ilgili parça üç sorgunun tamamında ilk sırada bulundu.
 
 ## Toplu Veri Kaynağı
 
@@ -119,6 +121,18 @@ python scripts/compare_chunking_configs.py
 Araç, temiz corpus içinden kısa, orta, uzun ve çok uzun metin gruplarından deterministik örnekler seçer. Karar türü çeşitliliğini koruyarak 24 örnek üzerinde 800, 1.200 ve 1.600 karakterlik chunk boyutlarını; 100, 200 ve 300 karakterlik hedef örtüşmelerle çapraz karşılaştırır. Her yapılandırmada parça sayısı, uzunluk dağılımı, gerçek örtüşme, paragraf/cümle sınırı oranı ve tekrar kapsama yükü ölçülür.
 
 Karşılaştırmada 1.200/200 ayarı; 949 karakterlik medyan parça uzunluğu, yüzde 92,11 paragraf/cümle sınırı oranı ve yüzde 13,41 tekrar kapsama yüküyle dengeli sonuç vermiştir. 800 karakterlik seçenekler fazla parçalanma ve daha yüksek tekrar yükü oluştururken, 1.600 karakterlik seçenekler örneklerin çoğunu tek parçada bırakarak semantik arama ayrıntısını azaltmıştır. Daire, esas numarası, karar numarası, tarih, kaynak metin karması ve kesin karakter aralıkları bütün yapılandırmalarda doğrulanmıştır. Ayrıntılar `docs/gun12_chunking_yapilandirma_karsilastirmasi.md` dosyasındadır.
+
+## LM Studio Embedding Değerlendirmesi
+
+LM Studio yerel sunucusu çalışırken gerçek Yargıtay parçalarıyla embedding değerlendirmesi şu komutla yürütülebilir:
+
+```powershell
+python scripts/evaluate_legal_embeddings.py
+```
+
+`scripts/lmstudio_embeddings.py`; `/v1/models` ve `/v1/embeddings` uç noktalarına UTF-8 batch istekleri gönderir. Model kimliği, cevap sayısı, sıra indeksleri, vektör boyutları, sayısal sonluluk ve sıfır olmayan vektör normları doğrulanmadan embedding sonucu kullanılmaz. Kullanıcı sorguları ile karar parçaları aynı `text-embedding-embeddinggemma-300m` modeliyle vektörleştirilir ve kosinüs benzerliğiyle sıralanır.
+
+İşe iade, tapu iptali/tescil ve uyuşturucu ticareti konularındaki üç kullanıcı sorgusu; aynı konulardan seçilmiş üç gerçek Yargıtay chunk'ıyla karşılaştırılmıştır. Model 768 boyutlu vektörler üretmiş ve beklenen ilgili parça üç sorgunun tamamında ilk sırada yer almıştır. Ortalama ilgili-ilgisiz skor farkı 0,233831'dir. Bu küçük kontrollü deney bir genel doğruluk veya üretim eşiği ölçümü değildir; sonraki günlerde daha geniş test seti ve vektör veritabanı aramasıyla geliştirilecektir. Ayrıntılar `docs/gun13_lmstudio_embedding_degerlendirmesi.md` dosyasındadır.
 
 ## Uyarı
 
