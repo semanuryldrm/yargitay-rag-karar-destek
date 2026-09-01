@@ -29,7 +29,7 @@ Yeterli veya güvenilir kaynak bulunamadığında sistemin bu durumu açıkça b
 - LM Studio
 - Gemma 4 12B QAT
 - LM Studio embedding modeli
-- Vektör veritabanı
+- Qdrant vektör veritabanı (yerel kalıcı mod)
 - Bruno API test aracı
 - Git ve GitHub
 
@@ -73,6 +73,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - 1.200 karakter ve 200 karakter hedef örtüşme ayarı, arama ayrıntısı, yapısal sınır koruması ve tekrar yükü arasındaki denge nedeniyle sonraki aşamalar için korundu.
 - LM Studio için doğrulamalı bir embedding istemcisi ile kosinüs benzerliği ve sıralama yardımcıları geliştirildi.
 - Üç hukuki kullanıcı sorgusu ve üç gerçek Yargıtay parçası `text-embedding-embeddinggemma-300m` modeliyle 768 boyutlu vektörlere dönüştürüldü; ilgili parça üç sorgunun tamamında ilk sırada bulundu.
+- Qdrant 1.19.0 yerel kalıcı modda kuruldu; `yargitay_karar_parcalari` koleksiyonu 768 boyut ve Cosine uzaklık yöntemiyle oluşturuldu.
+- Karar bağlantısı, hukuk metadata'sı, kaynak/lisans, veri kalitesi ve embedding bilgilerini kapsayan 22 alanlı payload şeması tanımlandı; gerçek karar parçalarıyla ekleme, okuma, silme, geri yükleme ve benzerlik sorguları doğrulandı.
 
 ## Toplu Veri Kaynağı
 
@@ -133,6 +135,24 @@ python scripts/evaluate_legal_embeddings.py
 `scripts/lmstudio_embeddings.py`; `/v1/models` ve `/v1/embeddings` uç noktalarına UTF-8 batch istekleri gönderir. Model kimliği, cevap sayısı, sıra indeksleri, vektör boyutları, sayısal sonluluk ve sıfır olmayan vektör normları doğrulanmadan embedding sonucu kullanılmaz. Kullanıcı sorguları ile karar parçaları aynı `text-embedding-embeddinggemma-300m` modeliyle vektörleştirilir ve kosinüs benzerliğiyle sıralanır.
 
 İşe iade, tapu iptali/tescil ve uyuşturucu ticareti konularındaki üç kullanıcı sorgusu; aynı konulardan seçilmiş üç gerçek Yargıtay chunk'ıyla karşılaştırılmıştır. Model 768 boyutlu vektörler üretmiş ve beklenen ilgili parça üç sorgunun tamamında ilk sırada yer almıştır. Ortalama ilgili-ilgisiz skor farkı 0,233831'dir. Bu küçük kontrollü deney bir genel doğruluk veya üretim eşiği ölçümü değildir; sonraki günlerde daha geniş test seti ve vektör veritabanı aramasıyla geliştirilecektir. Ayrıntılar `docs/gun13_lmstudio_embedding_degerlendirmesi.md` dosyasındadır.
+
+## Qdrant Vektör Veritabanı
+
+Bağımlılıkları proje sanal ortamına kurmak için:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+LM Studio sunucusu ve embedding modeli çalışırken 14. gün koleksiyon ve işlem doğrulaması şu komutla yürütülebilir:
+
+```powershell
+python scripts/validate_qdrant_vector_store.py
+```
+
+Araç `data/vector_store/qdrant` altında yerel ve kalıcı Qdrant veritabanını açar. `yargitay_karar_parcalari` koleksiyonunun 768 boyutlu `text-embedding-embeddinggemma-300m` vektörleri ile Cosine uzaklık yöntemini kullandığını doğrular. Koleksiyon veya embedding modeli uyumsuzsa mevcut veriyi sessizce kullanmaz.
+
+Üç gerçek Yargıtay parçası üzerinde upsert, kimlikle okuma, silme ve geri yükleme işlemleri başarıyla doğrulanmıştır. Aynı üç hukuki sorgunun her birinde beklenen karar parçası Qdrant benzerlik aramasında ilk sırada bulunmuştur. Ayrıntılar `docs/gun14_qdrant_vektor_veritabani.md` dosyasındadır. Tam 31.544 parçanın toplu embedding ve kayıt işlemi 15. gün aşamasıdır.
 
 ## Uyarı
 

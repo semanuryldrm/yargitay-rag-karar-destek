@@ -9,5 +9,6 @@ data/raw/yargitay_*.jsonl
 data/raw/yargitay_*_state.json
 data/processed/yargitay_*.jsonl
 data/processed/yargitay_*_stats.json
+data/vector_store/
 logs/*.log
 logs/*.jsonl
