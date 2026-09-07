@@ -83,6 +83,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Altı hukuki sorguyla `top_k`, eşik ve filtre seçenekleri gerçek 31.544 noktalı indekste; üç chunk boyutu ise 31 kararlık zor-negatif havuzda karşılaştırıldı.
 - Bulunan kararları `[K1]` biçiminde etiketleyip Gemma 4 12B QAT modeline aktaran kaynaklı RAG cevap zinciri geliştirildi; yetersiz kaynakta model çağrılmadan güvenli duruş sağlandı.
 - Gemma çıktılarında geçerli kaynak etiketi, reasoning'in kapalı olması, kesin sonuç vermeme ve zorunlu hukuki uyarı kuralları uygulama katmanında doğrulandı.
+- FastAPI servisleri `1.3.0` sürümünde tamamlandı; canlı embedding, Qdrant ve Gemma denetimi yapan sistem durumu uç noktası ile standart `422` istek doğrulama yanıtları eklendi.
+- Boş, 4.000 karakterlik, aşırı uzun, hatalı ve normal sorgular gerçek yerel servis üzerinde sınandı; Bruno koleksiyonundaki dokuz isteğin tamamı geçti ve yeniden çalıştırılabilir uçtan uca test aracı eklendi.
 
 ## Toplu Veri Kaynağı
 
@@ -209,6 +211,18 @@ python scripts/evaluate_semantic_search_quality.py
 Her karar `[K1]`, `[K2]` biçiminde etiketlenir ve cevapta kullanılan etiketler gerçek kaynak listesiyle doğrulanır. Bilinmeyen kaynak etiketi, kaynaksız cevap, kesin dava sonucu ifadesi veya zorunlu hukuki uyarının eksikliği güvenli biçimde reddedilir. LM Studio isteği `reasoning=off`, `temperature=0` ve `stream=false` seçenekleriyle gönderilir; model kimliği ile token istatistikleri doğrulanır.
 
 Bruno koleksiyonundaki `04-rag-answer.bru` kaynak bulunan normal akışı, `05-rag-insufficient-sources.bru` ise alan dışı sorguda Gemma çağrılmadan güvenli duruşu test eder. Gerçek uçtan uca işe iade testinde beş karar kullanılmış, cevap `[K1]`-`[K5]` etiketlerini içermiş ve reasoning tokenı sıfır kalmıştır. Uygulama ayrıntıları ve test sonuçları `docs/gun18_gemma_rag_cevap_zinciri.md` dosyasındadır.
+
+## FastAPI Entegrasyon ve Uçtan Uca Testler
+
+API `1.3.0` sürümünde `GET /api/v1/system-status`, `POST /api/v1/semantic-search` ve `POST /api/v1/rag-answer` servislerini sunar. Sistem durumu isteği LM Studio'daki embedding ve Gemma modellerini her çağrıda canlı olarak doğrular, Qdrant koleksiyonunun kayıt sayısını denetler ve üç bileşenin durumunu ayrı gösterir. Boş, kısa, 4.000 karakteri aşan, sınır dışı veya bilinmeyen alan içeren istekler, kullanıcı girdisini geri yansıtmayan standart `request_validation_failed` kodlu `422` yanıtıyla reddedilir.
+
+Yerel API çalışırken 19. gün uçtan uca paketi şu komutla yeniden çalıştırılabilir:
+
+```powershell
+python scripts/run_day19_e2e.py
+```
+
+Araç sistem durumunu, üç hatalı istek sınıfını, 4.000 karakterlik geçerli sorguyu, normal semantik aramayı ve embedding-Qdrant-Gemma zincirini denetler. Gerçek koşuda bütün kontroller geçti; normal sorguda beş benzersiz karar bulundu, beşi Gemma cevabında kaynak olarak kullanıldı ve reasoning tokenı sıfır kaldı. Bruno masaüstü Runner'da koleksiyondaki dokuz isteğin dokuzu geçti. Ayrıntılar `docs/gun19_fastapi_entegrasyon_ve_uctan_uca_testler.md` dosyasındadır.
 
 ## Uyarı
 

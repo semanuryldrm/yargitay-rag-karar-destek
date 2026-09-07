@@ -1,0 +1,35 @@
+meta {
+  name: Boş Sorgu Doğrulaması
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/semantic-search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": ""
+  }
+}
+
+tests {
+  test("Boş sorgu HTTP 422 ile reddedilir", function() {
+    expect(res.getStatus()).to.equal(422);
+  });
+
+  test("Standart alan doğrulama hatası döner", function() {
+    const detail = res.getBody().detail;
+    expect(detail.code).to.equal("request_validation_failed");
+    expect(detail.errors).to.be.an("array").that.is.not.empty;
+    expect(detail.errors[0].field).to.include("olay");
+  });
+}

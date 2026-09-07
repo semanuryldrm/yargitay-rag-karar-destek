@@ -70,6 +70,8 @@ class SemanticSearchProtocol(Protocol):
 class ChatClientProtocol(Protocol):
     model: str
 
+    def ensure_model_available(self) -> tuple[str, ...]: ...
+
     def generate(
         self,
         *,
@@ -228,6 +230,10 @@ class RAGAnswerService:
         self.minimum_sources = minimum_sources
 
     def health(self) -> dict[str, Any]:
+        try:
+            self.chat_client.ensure_model_available()
+        except ChatClientError as exc:
+            raise RAGAnswerError(str(exc)) from exc
         return {
             "chat_model": self.chat_client.model,
             "rag_prompt_version": PROMPT_VERSION,
@@ -255,6 +261,12 @@ class RAGAnswerService:
         results = search_response.get("sonuclar")
         if not isinstance(results, list):
             raise RAGAnswerError("Semantik arama geçerli sonuç listesi döndürmedi")
+        embedding_model = search_response.get("embedding_modeli")
+        collection = search_response.get("koleksiyon")
+        if not isinstance(embedding_model, str) or not embedding_model.strip():
+            raise RAGAnswerError("Semantik arama embedding modeli döndürmedi")
+        if not isinstance(collection, str) or not collection.strip():
+            raise RAGAnswerError("Semantik arama Qdrant koleksiyonu döndürmedi")
         sources, context = prepare_sources(results)
 
         if len(sources) < self.minimum_sources:
@@ -268,6 +280,8 @@ class RAGAnswerService:
                 "minimum_gerekli_kaynak": self.minimum_sources,
                 "minimum_benzerlik_skoru": min_score,
                 "filtreler": search_response.get("filtreler", {}),
+                "embedding_modeli": embedding_model,
+                "koleksiyon": collection,
                 "chat_modeli": self.chat_client.model,
                 "prompt_surumu": PROMPT_VERSION,
                 "llm_cagrildi": False,
@@ -308,6 +322,8 @@ class RAGAnswerService:
             "minimum_gerekli_kaynak": self.minimum_sources,
             "minimum_benzerlik_skoru": min_score,
             "filtreler": search_response.get("filtreler", {}),
+            "embedding_modeli": embedding_model,
+            "koleksiyon": collection,
             "chat_modeli": generation.model,
             "prompt_surumu": PROMPT_VERSION,
             "llm_cagrildi": True,

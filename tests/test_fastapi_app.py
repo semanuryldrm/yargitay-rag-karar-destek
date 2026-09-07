@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.rag_answer import RAGAnswerError
 from app.semantic_search import LEGAL_NOTICE, SemanticSearchError
 
 
@@ -102,6 +103,8 @@ class FakeRAGService:
             "minimum_gerekli_kaynak": 1,
             "minimum_benzerlik_skoru": min_score,
             "filtreler": metadata_filters or {},
+            "embedding_modeli": "test-embedding-model",
+            "koleksiyon": "test_collection",
             "chat_modeli": "google/gemma-4-12b-qat",
             "prompt_surumu": "1.0",
             "llm_cagrildi": True,
@@ -154,6 +157,7 @@ class FastAPIApplicationTests(unittest.TestCase):
 
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["indexed_chunks"], 31_544)
+        self.assertEqual(health.json()["status"], "degraded")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sonuc_sayisi"], 1)
         self.assertEqual(service.calls, [
@@ -196,6 +200,40 @@ class FastAPIApplicationTests(unittest.TestCase):
             ]
 
         self.assertTrue(all(response.status_code == 422 for response in responses))
+        self.assertTrue(
+            all(
+                response.json()["detail"]["code"]
+                == "request_validation_failed"
+                for response in responses
+            )
+        )
+
+    def test_empty_long_malformed_and_valid_long_requests(self):
+        service = FakeSearchService()
+        with TestClient(create_app(search_service=service)) as client:
+            empty = client.post(
+                "/api/v1/semantic-search", json={"olay": ""}
+            )
+            too_long = client.post(
+                "/api/v1/semantic-search", json={"olay": "x" * 4_001}
+            )
+            malformed = client.post(
+                "/api/v1/semantic-search",
+                content=b'{"olay":',
+                headers={"Content-Type": "application/json"},
+            )
+            valid_long = client.post(
+                "/api/v1/semantic-search", json={"olay": "x" * 4_000}
+            )
+
+        for response in (empty, too_long, malformed):
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(
+                response.json()["detail"]["code"],
+                "request_validation_failed",
+            )
+        self.assertEqual(valid_long.status_code, 200)
+        self.assertEqual(valid_long.json()["sorgu"], "x" * 4_000)
 
     def test_dependency_failure_returns_structured_503(self):
         class FailingSearchService(FakeSearchService):
@@ -239,8 +277,17 @@ class FastAPIApplicationTests(unittest.TestCase):
 
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["chat_model"], "google/gemma-4-12b-qat")
+        self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(health.json()["components"]["embedding"]["status"], "ok")
+        self.assertEqual(
+            health.json()["components"]["vector_database"]["indexed_chunks"],
+            31_544,
+        )
+        self.assertEqual(health.json()["components"]["gemma"]["status"], "ok")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["durum"], "tamamlandi")
+        self.assertEqual(response.json()["embedding_modeli"], "test-embedding-model")
+        self.assertEqual(response.json()["koleksiyon"], "test_collection")
         self.assertEqual(response.json()["kaynaklar"][0]["kaynak_etiketi"], "K1")
         self.assertEqual(
             rag.calls,
@@ -262,6 +309,48 @@ class FastAPIApplicationTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"]["code"], "rag_answer_unavailable")
+
+    def test_explicit_system_status_endpoint_matches_health(self):
+        with TestClient(
+            create_app(
+                search_service=FakeSearchService(),
+                rag_service=FakeRAGService(),
+            )
+        ) as client:
+            health = client.get("/health")
+            system_status = client.get("/api/v1/system-status")
+
+        self.assertEqual(system_status.status_code, 200)
+        self.assertEqual(system_status.json(), health.json())
+
+    def test_system_status_reports_search_and_gemma_dependency_failures(self):
+        class FailingHealthSearchService(FakeSearchService):
+            def health(self):
+                raise SemanticSearchError("Embedding modeli kullanılamıyor")
+
+        class FailingHealthRAGService(FakeRAGService):
+            def health(self):
+                raise RAGAnswerError("Gemma modeli kullanılamıyor")
+
+        applications = (
+            create_app(
+                search_service=FailingHealthSearchService(),
+                rag_service=FakeRAGService(),
+            ),
+            create_app(
+                search_service=FakeSearchService(),
+                rag_service=FailingHealthRAGService(),
+            ),
+        )
+        for application in applications:
+            with self.subTest(application=application):
+                with TestClient(application) as client:
+                    response = client.get("/api/v1/system-status")
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(
+                    response.json()["detail"]["code"],
+                    "dependency_unavailable",
+                )
 
 
 if __name__ == "__main__":

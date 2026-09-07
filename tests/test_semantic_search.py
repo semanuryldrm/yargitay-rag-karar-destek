@@ -23,6 +23,11 @@ class FakeEmbeddingClient:
 
     def __init__(self):
         self.queries = []
+        self.model_checks = 0
+
+    def ensure_model_available(self):
+        self.model_checks += 1
+        return (self.model,)
 
     def embed_text(self, text):
         self.queries.append(text)
@@ -168,6 +173,19 @@ class SemanticSearchTests(unittest.TestCase):
             expected_point_count=31_544,
         )
         with self.assertRaisesRegex(SemanticSearchError, "point count mismatch"):
+            service.health()
+
+    def test_health_checks_live_embedding_model(self):
+        class UnavailableEmbeddingClient(FakeEmbeddingClient):
+            def ensure_model_available(self):
+                raise EmbeddingClientError("Embedding modeli kullanılamıyor")
+
+        service = SemanticSearchService(
+            embedding_client=UnavailableEmbeddingClient(),
+            vector_store=FakeVectorStore(()),
+            expected_point_count=3,
+        )
+        with self.assertRaisesRegex(SemanticSearchError, "kullanılamıyor"):
             service.health()
 
     def test_rejects_corrupt_qdrant_payload(self):

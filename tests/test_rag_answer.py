@@ -12,7 +12,7 @@ from app.rag_answer import (
     prepare_sources,
     validate_grounded_answer,
 )
-from scripts.lmstudio_chat import ChatGeneration
+from scripts.lmstudio_chat import ChatClientError, ChatGeneration
 
 
 CLOSING_NOTICE = (
@@ -50,6 +50,8 @@ class FakeSemanticSearch:
         return {
             "sorgu": " ".join(query.split()),
             "filtreler": metadata_filters or {},
+            "embedding_modeli": "test-embedding-model",
+            "koleksiyon": "test_collection",
             "sonuclar": self.results[:top_k],
         }
 
@@ -65,6 +67,11 @@ class FakeChatClient:
             + CLOSING_NOTICE
         )
         self.calls = []
+        self.model_checks = 0
+
+    def ensure_model_available(self):
+        self.model_checks += 1
+        return (self.model,)
 
     def generate(self, *, system_prompt, input_text, max_output_tokens):
         self.calls.append((system_prompt, input_text, max_output_tokens))
@@ -100,6 +107,8 @@ class RAGAnswerTests(unittest.TestCase):
         self.assertTrue(response["llm_cagrildi"])
         self.assertEqual(response["kullanilan_kaynak_sayisi"], 2)
         self.assertEqual(response["model_response_id"], "resp_test")
+        self.assertEqual(response["embedding_modeli"], "test-embedding-model")
+        self.assertEqual(response["koleksiyon"], "test_collection")
         self.assertEqual(
             [source["kaynak_etiketi"] for source in response["kaynaklar"]],
             ["K1", "K2"],
@@ -139,6 +148,42 @@ class RAGAnswerTests(unittest.TestCase):
         self.assertEqual(response["bulunan_kaynak_sayisi"], 1)
         self.assertEqual(chat.calls, [])
         self.assertIsNone(response["model_response_id"])
+
+    def test_health_checks_live_chat_model(self):
+        chat = FakeChatClient()
+        service = RAGAnswerService(
+            semantic_search=FakeSemanticSearch([]),
+            chat_client=chat,
+        )
+        self.assertEqual(service.health()["chat_model"], chat.model)
+        self.assertEqual(chat.model_checks, 1)
+
+        class UnavailableChatClient(FakeChatClient):
+            def ensure_model_available(self):
+                raise ChatClientError("Gemma modeli kullanılamıyor")
+
+        unavailable = RAGAnswerService(
+            semantic_search=FakeSemanticSearch([]),
+            chat_client=UnavailableChatClient(),
+        )
+        with self.assertRaisesRegex(RAGAnswerError, "kullanılamıyor"):
+            unavailable.health()
+
+    def test_rejects_missing_pipeline_metadata(self):
+        search = FakeSemanticSearch([search_result("d1"), search_result("d2")])
+        chat = FakeChatClient()
+        service = RAGAnswerService(semantic_search=search, chat_client=chat)
+
+        original_search = search.search
+
+        def search_without_metadata(*args, **kwargs):
+            response = original_search(*args, **kwargs)
+            response.pop("embedding_modeli")
+            return response
+
+        search.search = search_without_metadata
+        with self.assertRaisesRegex(RAGAnswerError, "embedding modeli"):
+            service.answer("İş sözleşmem gerekçesiz şekilde feshedildi.")
 
     def test_rejects_unknown_citation_and_definitive_outcome(self):
         unknown = f"Değerlendirme [K9].\nSınırlamalar\n{CLOSING_NOTICE}"

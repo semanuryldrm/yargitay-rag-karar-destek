@@ -1,0 +1,54 @@
+meta {
+  name: 19. Gün Uçtan Uca Soru Cevap
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/rag-answer
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İşveren belirsiz süreli iş sözleşmemi geçerli bir neden göstermeden feshetti. İşe iade ve işe başlatmama tazminatı talep edebilir miyim?",
+    "top_k": 5,
+    "min_score": 0.65,
+    "filtreler": {
+      "karar_turu": "hukuk",
+      "daire": "7. Hukuk Dairesi"
+    }
+  }
+}
+
+tests {
+  test("Embedding, Qdrant ve Gemma zinciri tamamlanır", function() {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.durum).to.equal("tamamlandi");
+    expect(body.embedding_modeli).to.equal("text-embedding-embeddinggemma-300m");
+    expect(body.koleksiyon).to.equal("yargitay_karar_parcalari");
+    expect(body.chat_modeli).to.equal("google/gemma-4-12b-qat");
+    expect(body.llm_cagrildi).to.equal(true);
+  });
+
+  test("Cevap en az iki benzersiz karara dayanır", function() {
+    const body = res.getBody();
+    const decisionIds = body.kaynaklar.map((item) => item.karar_id);
+    expect(body.bulunan_kaynak_sayisi).to.be.at.least(2);
+    expect(new Set(decisionIds).size).to.equal(decisionIds.length);
+    expect(body.cevap).to.include("[K");
+  });
+
+  test("Gemma reasoning kullanmaz ve hukuki uyarı korunur", function() {
+    const body = res.getBody();
+    expect(body.model_istatistikleri.reasoning_output_tokens).to.equal(0);
+    expect(body.cevap).to.match(/Somut olayın özelliklerine göre sonuç değişebilir; bu değerlendirme hukuki danışmanlık değildir\.$/);
+  });
+}

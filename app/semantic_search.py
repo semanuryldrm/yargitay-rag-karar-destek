@@ -39,6 +39,8 @@ class EmbeddingClientProtocol(Protocol):
     model: str
     base_url: str
 
+    def ensure_model_available(self) -> tuple[str, ...]: ...
+
     def embed_text(self, text: str) -> list[float]: ...
 
 
@@ -246,8 +248,9 @@ class SemanticSearchService:
 
     def health(self) -> dict[str, Any]:
         try:
+            self.embedding_client.ensure_model_available()
             point_count = self.vector_store.count()
-        except VectorStoreError as exc:
+        except (EmbeddingClientError, VectorStoreError) as exc:
             raise SemanticSearchError(str(exc)) from exc
         if point_count != self.expected_point_count:
             raise SemanticSearchError(

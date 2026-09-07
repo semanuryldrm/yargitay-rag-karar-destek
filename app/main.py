@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import Settings
@@ -31,7 +33,7 @@ from scripts.lmstudio_chat import LMStudioChatClient
 from scripts.qdrant_vector_store import QdrantVectorStore
 
 
-API_VERSION = "1.2.0"
+API_VERSION = "1.3.0"
 
 
 class SearchServiceProtocol(Protocol):
@@ -184,6 +186,8 @@ class RAGAnswerResponse(BaseModel):
     minimum_gerekli_kaynak: int
     minimum_benzerlik_skoru: float
     filtreler: dict[str, str | bool]
+    embedding_modeli: str
+    koleksiyon: str
     chat_modeli: str
     prompt_surumu: str
     llm_cagrildi: bool
@@ -195,7 +199,7 @@ class RAGAnswerResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
+    status: Literal["ok", "degraded"]
     api_version: str
     embedding_model: str
     qdrant_collection: str
@@ -203,6 +207,7 @@ class HealthResponse(BaseModel):
     chat_model: str | None = None
     rag_prompt_version: str | None = None
     minimum_rag_sources: int | None = None
+    components: dict[str, dict[str, str | int]]
 
 
 def _build_live_services(
@@ -282,6 +287,30 @@ def create_app(
         lifespan=lifespan,
     )
 
+    @application.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        _request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        errors = [
+            {
+                "field": ".".join(str(part) for part in error["loc"]),
+                "type": error["type"],
+                "message": error["msg"],
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={
+                "detail": {
+                    "code": "request_validation_failed",
+                    "message": "İstek alanları doğrulanamadı",
+                    "errors": errors,
+                }
+            },
+        )
+
     def get_search_service(request: Request) -> SearchServiceProtocol:
         service = getattr(request.app.state, "search_service", None)
         if service is None:
@@ -306,8 +335,7 @@ def create_app(
             )
         return service
 
-    @application.get("/health", response_model=HealthResponse, tags=["sistem"])
-    def health(request: Request) -> dict[str, Any]:
+    def build_system_status(request: Request) -> dict[str, Any]:
         service = get_search_service(request)
         try:
             details = service.health()
@@ -323,8 +351,48 @@ def create_app(
         }
         available_rag_service = getattr(request.app.state, "rag_service", None)
         if available_rag_service is not None:
-            rag_details = available_rag_service.health()
-        return {"api_version": API_VERSION, **details, **rag_details}
+            try:
+                rag_details = available_rag_service.health()
+            except RAGAnswerError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"code": "dependency_unavailable", "message": str(exc)},
+                ) from exc
+        overall_status = "ok" if available_rag_service is not None else "degraded"
+        components = {
+            "embedding": {
+                "status": "ok",
+                "model": str(details["embedding_model"]),
+            },
+            "vector_database": {
+                "status": "ok",
+                "collection": str(details["qdrant_collection"]),
+                "indexed_chunks": int(details["indexed_chunks"]),
+            },
+            "gemma": {
+                "status": "ok" if available_rag_service is not None else "unavailable",
+                "model": str(rag_details["chat_model"] or "not_configured"),
+            },
+        }
+        return {
+            "api_version": API_VERSION,
+            **details,
+            "status": overall_status,
+            **rag_details,
+            "components": components,
+        }
+
+    @application.get("/health", response_model=HealthResponse, tags=["sistem"])
+    def health(request: Request) -> dict[str, Any]:
+        return build_system_status(request)
+
+    @application.get(
+        "/api/v1/system-status",
+        response_model=HealthResponse,
+        tags=["sistem"],
+    )
+    def system_status(request: Request) -> dict[str, Any]:
+        return build_system_status(request)
 
     @application.post(
         "/api/v1/semantic-search",

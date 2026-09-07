@@ -1,0 +1,38 @@
+meta {
+  name: Hatalı Sorgu Doğrulaması
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/semantic-search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İşveren sözleşmemi herhangi bir gerekçe göstermeden feshetti.",
+    "top_k": 0,
+    "bilinmeyen_alan": true
+  }
+}
+
+tests {
+  test("Hatalı alanlar HTTP 422 ile reddedilir", function() {
+    expect(res.getStatus()).to.equal(422);
+  });
+
+  test("top_k ve bilinmeyen alan hataları birlikte gösterilir", function() {
+    const detail = res.getBody().detail;
+    const fields = detail.errors.map((item) => item.field);
+    expect(detail.code).to.equal("request_validation_failed");
+    expect(fields.some((field) => field.includes("top_k"))).to.equal(true);
+    expect(fields.some((field) => field.includes("bilinmeyen_alan"))).to.equal(true);
+  });
+}
