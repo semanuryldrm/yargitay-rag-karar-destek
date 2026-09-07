@@ -1,0 +1,57 @@
+meta {
+  name: Eşikli ve Filtreli Karar Arama
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/semantic-search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İşveren belirsiz süreli iş sözleşmemi geçerli bir neden göstermeden feshetti. İşe iade ve işe başlatmama tazminatı talep edebilir miyim?",
+    "top_k": 5,
+    "min_score": 0.65,
+    "filtreler": {
+      "karar_turu": "hukuk",
+      "daire": "7. Hukuk Dairesi"
+    }
+  }
+}
+
+tests {
+  test("HTTP 200 döner", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("Eşik ve filtreler yanıtta görünür", function() {
+    const body = res.getBody();
+    expect(body.minimum_benzerlik_skoru).to.equal(0.65);
+    expect(body.filtreler.karar_turu).to.equal("hukuk");
+    expect(body.filtreler.daire).to.equal("7. Hukuk Dairesi");
+  });
+
+  test("En az bir yeterli ve benzersiz karar döner", function() {
+    const body = res.getBody();
+    const decisionIds = body.sonuclar.map((item) => item.karar_id);
+    expect(body.yeterli_sonuc_bulundu).to.equal(true);
+    expect(body.sonuc_sayisi).to.be.at.least(1);
+    expect(new Set(decisionIds).size).to.equal(decisionIds.length);
+  });
+
+  test("Tüm sonuçlar eşik ve metadata filtresine uyar", function() {
+    for (const item of res.getBody().sonuclar) {
+      expect(item.benzerlik_skoru).to.be.at.least(0.65);
+      expect(item.karar_turu).to.equal("hukuk");
+      expect(item.daire).to.equal("7. Hukuk Dairesi");
+    }
+  });
+}

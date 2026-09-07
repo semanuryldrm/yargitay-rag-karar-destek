@@ -16,8 +16,10 @@ from qdrant_vector_store import (
     PAYLOAD_SCHEMA,
     QdrantVectorStore,
     VectorStoreError,
+    build_metadata_filter,
     build_chunk_payload,
     point_id_for_chunk,
+    validate_score_threshold,
     validate_vector,
 )
 from validate_qdrant_vector_store import run_day14_validation
@@ -169,6 +171,33 @@ class QdrantVectorStoreTests(unittest.TestCase):
             validate_vector([math.nan, 0.0, 1.0], expected_size=3)
         with self.assertRaises(VectorStoreError):
             validate_vector([0.0, 0.0, 0.0], expected_size=3)
+
+    def test_search_supports_exact_metadata_filters_and_score_threshold(self):
+        self.store.ensure_collection()
+        hukuk = chunk_record("d1:c0001", "İş sözleşmesi feshi.")
+        ceza = chunk_record(
+            "d2:c0001", "Uyuşturucu ticareti.", chamber="9. Ceza Dairesi"
+        )
+        ceza["karar_turu"] = "ceza"
+        self.store.upsert_chunks([hukuk, ceza], [[1, 0, 0], [0, 1, 0]])
+
+        filtered = self.store.search(
+            [0.8, 0.2, 0],
+            limit=2,
+            metadata_filters={"karar_turu": "ceza"},
+        )
+        self.assertEqual([hit.chunk_id for hit in filtered], ["d2:c0001"])
+        self.assertEqual(
+            self.store.search([0.8, 0.2, 0], limit=2, score_threshold=0.999),
+            (),
+        )
+
+        self.assertIsNone(build_metadata_filter({}))
+        self.assertEqual(validate_score_threshold(0.6), 0.6)
+        with self.assertRaises(VectorStoreError):
+            build_metadata_filter({"bilinmeyen": "deger"})
+        with self.assertRaises(VectorStoreError):
+            validate_score_threshold(True)
 
     def test_optional_legal_metadata_preserves_null_values(self):
         self.store.ensure_collection()

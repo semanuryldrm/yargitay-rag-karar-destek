@@ -79,6 +79,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Toplu indeksleme akışına atomik ilerleme durumu, kaldığı yerden devam, üç denemeli hata yönetimi, başarısız batch günlüğü ve son kayıt sayısı/payload karma doğrulaması eklendi; gerçek çalıştırma 247 batch ve sıfır hatayla tamamlandı.
 - Kullanıcının doğal dille anlattığı hukuki olayı LM Studio ile embedding'e dönüştürüp 31.544 noktalı Qdrant koleksiyonunda en yakın karar parçalarını bulan doğrulamalı semantik arama servisi geliştirildi.
 - Semantik arama FastAPI'ye bağlandı; sağlık ve arama uç noktaları Bruno koleksiyonuyla gerçek yerel servis üzerinde `200 OK` yanıtları alınarak doğrulandı.
+- Semantik aramaya isteğe bağlı skor eşiği ve güvenli metadata filtreleri eklendi; aynı karara ait tekrar eden chunk'lar tek sonuca indirildi ve yetersiz sonuç durumu açık hâle getirildi.
+- Altı hukuki sorguyla `top_k`, eşik ve filtre seçenekleri gerçek 31.544 noktalı indekste; üç chunk boyutu ise 31 kararlık zor-negatif havuzda karşılaştırıldı.
 
 ## Toplu Veri Kaynağı
 
@@ -180,9 +182,23 @@ LM Studio'da `text-embedding-embeddinggemma-300m` modeli açıkken FastAPI servi
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Servis başlarken LM Studio modelini, Qdrant koleksiyon şemasını ve kesin `31.544` nokta sayısını doğrular. `GET /health` çalışma durumunu; `POST /api/v1/semantic-search` ise `olay` ve isteğe bağlı `top_k` alanlarını alıp sorgu embedding'ini üretir, Qdrant'taki en yakın parçaları benzerlik sırasıyla ve kaynak/lisans metadata'sıyla döndürür. Olay metni 10-4.000 karakter, `top_k` değeri 1-20 aralığında doğrulanır; bağımlılık hataları yapılandırılmış `503` yanıtına çevrilir.
+Servis başlarken LM Studio modelini, Qdrant koleksiyon şemasını ve kesin `31.544` nokta sayısını doğrular. `GET /health` çalışma durumunu; `POST /api/v1/semantic-search` ise `olay`, isteğe bağlı `top_k`, `min_score` ve `filtreler` alanlarını alıp sorgu embedding'ini üretir. `karar_turu`, `daire`, `veri_kalite_durumu` ve `metin_2000_karakter_sinirinda` alanlarında kesin metadata filtresi uygulanabilir. Olay metni 10-4.000 karakter, `top_k` değeri 1-20 ve eşik -1 ile 1 aralığında doğrulanır; bilinmeyen filtreler reddedilir ve bağımlılık hataları yapılandırılmış `503` yanıtına çevrilir.
 
-`bruno` klasörü Bruno'da koleksiyon olarak açılıp `Local` ortamı seçildiğinde sağlık ve örnek işe iade sorgusu hazır olarak çalıştırılabilir. Gerçek GUI testinde sağlık isteği `200 OK` ve `31.544` indeksli parça; semantik arama isteği `200 OK` ve beş sonuç döndürdü. İlk sonuç `d1113966700:c0001`, benzerlik skoru `0,714982` ve `7. Hukuk Dairesi` kararı oldu. İstek dosyalarındaki Bruno testleri durum kodunu, sonuç sayısını, kaynak alanlarını ve skor sıralamasını denetler. Ayrıntılar `docs/gun16_semantik_arama_fastapi_bruno.md` dosyasındadır. 17. gün aşamasında semantik arama kalitesi daha geniş ve etiketli bir sorgu kümesiyle ölçülecek; gerekli filtreleme ve eşik seçenekleri karşılaştırılacaktır.
+Arama, istenen sonuç sayısının beş katı kadar aday chunk getirip aynı `karar_id` değerine sahip tekrarları kaldırır; her karar için en yüksek skorlu chunk'ı döndürür. Eşik üstünde sonuç kalmazsa `yeterli_sonuc_bulundu` alanı `false` olur. Böylece düşük skorlu veya aynı karardan tekrar eden parçalar yeterli kaynak gibi sunulmaz.
+
+`bruno` klasörü Bruno'da koleksiyon olarak açılıp `Local` ortamı seçildiğinde sağlık, temel semantik arama ve eşikli/filtreli arama istekleri çalıştırılabilir. İlk uçtan uca kurulumun ayrıntıları `docs/gun16_semantik_arama_fastapi_bruno.md` dosyasındadır.
+
+## Semantik Arama Kalite Karşılaştırması
+
+LM Studio ve yerel Qdrant çalışırken 17. gün deneyi şu komutla yeniden üretilebilir:
+
+```powershell
+python scripts/evaluate_semantic_search_quality.py
+```
+
+Üç çapa karar ve üç alan dışı hukuki sorguyla yapılan gerçek indeks deneyinde `top_k=10`, `min_score=0,65` ayarı çapa kararların `2/3`'ünü bulup alan dışı sorguların `2/3`'ünü reddetti. Doğru daire önceden bilindiğinde `daire` filtresi üç çapa kararı da ilk sıraya taşırken karar türü filtresi bu küçük sette ek kazanım sağlamadı. `0,65` eşiği küçük geliştirme setine özgü olduğundan zorunlu varsayılan yapılmadı.
+
+31 kararlık zor-negatif aday havuzundaki chunk karşılaştırmasında 800/200 ayarı recall@5 değerini `2/3`, mevcut 1200/200 ayarı `1/3`, 1600/200 ayarı `0/3` üretti. Bu sınırlı deney yeniden indeksleme kararı için yeterli görülmedi; mevcut indeks korundu ve 800/200 daha geniş test için aday kaydedildi. Yöntem, tüm sonuçlar ve sınırlamalar `docs/gun17_semantik_arama_kalite_iyilestirmesi.md` dosyasındadır.
 
 ## Uyarı
 

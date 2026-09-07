@@ -22,12 +22,23 @@ class FakeSearchService:
             "indexed_chunks": 31_544,
         }
 
-    def search(self, query, *, top_k=5):
-        self.calls.append((query, top_k))
+    def search(
+        self,
+        query,
+        *,
+        top_k=5,
+        min_score=None,
+        metadata_filters=None,
+    ):
+        self.calls.append((query, top_k, min_score, metadata_filters))
         return {
             "sorgu": query,
             "top_k": top_k,
+            "aranan_aday_chunk_sayisi": top_k * 5,
+            "minimum_benzerlik_skoru": min_score,
+            "filtreler": metadata_filters or {},
             "sonuc_sayisi": 1,
+            "yeterli_sonuc_bulundu": True,
             "embedding_modeli": "test-embedding-model",
             "koleksiyon": "test_collection",
             "sure_ms": 12.5,
@@ -66,6 +77,11 @@ class FastAPIApplicationTests(unittest.TestCase):
                 json={
                     "olay": "İşveren sözleşmemi geçerli neden göstermeden feshetti.",
                     "top_k": 3,
+                    "min_score": 0.6,
+                    "filtreler": {
+                        "karar_turu": "hukuk",
+                        "daire": " 7.  Hukuk Dairesi ",
+                    },
                 },
             )
 
@@ -74,8 +90,15 @@ class FastAPIApplicationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["sonuc_sayisi"], 1)
         self.assertEqual(service.calls, [
-            ("İşveren sözleşmemi geçerli neden göstermeden feshetti.", 3)
+            (
+                "İşveren sözleşmemi geçerli neden göstermeden feshetti.",
+                3,
+                0.6,
+                {"karar_turu": "hukuk", "daire": "7. Hukuk Dairesi"},
+            )
         ])
+        self.assertEqual(response.json()["minimum_benzerlik_skoru"], 0.6)
+        self.assertEqual(response.json()["filtreler"]["karar_turu"], "hukuk")
 
     def test_request_validation_rejects_short_unknown_and_invalid_top_k(self):
         with TestClient(create_app(search_service=FakeSearchService())) as client:
@@ -87,6 +110,18 @@ class FastAPIApplicationTests(unittest.TestCase):
                     "top_k": 5,
                     "bilinmeyen": True,
                 },
+                {
+                    "olay": "Geçerli uzunlukta olay açıklamasıdır.",
+                    "min_score": 1.1,
+                },
+                {
+                    "olay": "Geçerli uzunlukta olay açıklamasıdır.",
+                    "filtreler": {"karar_turu": "idari"},
+                },
+                {
+                    "olay": "Geçerli uzunlukta olay açıklamasıdır.",
+                    "filtreler": {"bilinmeyen": "deger"},
+                },
             )
             responses = [
                 client.post("/api/v1/semantic-search", json=payload)
@@ -97,7 +132,14 @@ class FastAPIApplicationTests(unittest.TestCase):
 
     def test_dependency_failure_returns_structured_503(self):
         class FailingSearchService(FakeSearchService):
-            def search(self, query, *, top_k=5):
+            def search(
+                self,
+                query,
+                *,
+                top_k=5,
+                min_score=None,
+                metadata_filters=None,
+            ):
                 raise SemanticSearchError("LM Studio bağlantısı kurulamadı")
 
         with TestClient(create_app(search_service=FailingSearchService())) as client:

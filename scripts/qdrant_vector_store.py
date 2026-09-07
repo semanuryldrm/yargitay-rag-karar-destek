@@ -66,6 +66,13 @@ OPTIONAL_CHUNK_STRING_FIELDS = (
     "karar_tarihi",
 )
 
+FILTERABLE_METADATA_FIELDS: dict[str, type[str] | type[bool]] = {
+    "karar_turu": str,
+    "daire": str,
+    "veri_kalite_durumu": str,
+    "metin_2000_karakter_sinirinda": bool,
+}
+
 
 class VectorStoreError(RuntimeError):
     """Raised when vector-store data or collection state is unsafe to use."""
@@ -108,6 +115,54 @@ def validate_vector(vector: Sequence[float], *, expected_size: int) -> list[floa
     if squared_norm == 0.0:
         raise VectorStoreError("Vector has zero norm")
     return normalized
+
+
+def validate_score_threshold(value: float | None) -> float | None:
+    """Validate an optional cosine similarity threshold."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise VectorStoreError("Score threshold must be numeric or null")
+    threshold = float(value)
+    if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+        raise VectorStoreError("Score threshold must be between -1 and 1")
+    return threshold
+
+
+def build_metadata_filter(
+    metadata_filters: Mapping[str, str | bool] | None,
+) -> models.Filter | None:
+    """Build an allow-listed exact-match Qdrant metadata filter."""
+    if metadata_filters is None:
+        return None
+    if not isinstance(metadata_filters, Mapping):
+        raise VectorStoreError("Metadata filters must be an object")
+
+    conditions: list[models.FieldCondition] = []
+    for field in sorted(metadata_filters):
+        if field not in FILTERABLE_METADATA_FIELDS:
+            raise VectorStoreError(f"Unsupported metadata filter: {field}")
+        value = metadata_filters[field]
+        expected_type = FILTERABLE_METADATA_FIELDS[field]
+        if expected_type is str:
+            if not isinstance(value, str) or not value.strip():
+                raise VectorStoreError(
+                    f"Metadata filter {field!r} must be non-empty text"
+                )
+            normalized: str | bool = value.strip()
+        elif not isinstance(value, bool):
+            raise VectorStoreError(f"Metadata filter {field!r} must be boolean")
+        else:
+            normalized = value
+        conditions.append(
+            models.FieldCondition(
+                key=field,
+                match=models.MatchValue(value=normalized),
+            )
+        )
+    if not conditions:
+        return None
+    return models.Filter(must=conditions)
 
 
 def build_chunk_payload(
@@ -367,17 +422,19 @@ class QdrantVectorStore:
         query_vector: Sequence[float],
         *,
         limit: int = 5,
-        query_filter: models.Filter | None = None,
+        metadata_filters: Mapping[str, str | bool] | None = None,
+        score_threshold: float | None = None,
     ) -> tuple[SearchHit, ...]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise VectorStoreError("Search limit must be a positive integer")
         response = self.client.query_points(
             collection_name=self.collection_name,
             query=validate_vector(query_vector, expected_size=self.vector_size),
-            query_filter=query_filter,
+            query_filter=build_metadata_filter(metadata_filters),
             limit=limit,
             with_payload=True,
             with_vectors=False,
+            score_threshold=validate_score_threshold(score_threshold),
         )
         hits: list[SearchHit] = []
         seen_chunk_ids: set[str] = set()

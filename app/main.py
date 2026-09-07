@@ -1,10 +1,10 @@
-"""FastAPI entry point for Day 16 Yargitay semantic search."""
+"""FastAPI entry point for the local Yargitay semantic search service."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,13 +23,39 @@ from scripts.lmstudio_embeddings import LMStudioEmbeddingClient
 from scripts.qdrant_vector_store import QdrantVectorStore
 
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 
 
 class SearchServiceProtocol(Protocol):
     def health(self) -> dict[str, Any]: ...
 
-    def search(self, query: str, *, top_k: int = 5) -> dict[str, Any]: ...
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        min_score: float | None = None,
+        metadata_filters: dict[str, str | bool] | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class MetadataFiltersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    karar_turu: Literal["hukuk", "ceza", "kurul"] | None = None
+    daire: Annotated[str | None, Field(max_length=120)] = None
+    veri_kalite_durumu: Literal["gecerli", "uyarili"] | None = None
+    metin_2000_karakter_sinirinda: bool | None = None
+
+    @field_validator("daire")
+    @classmethod
+    def normalize_chamber(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("daire filtresi boş olamaz")
+        return normalized
 
 
 class SemanticSearchRequest(BaseModel):
@@ -44,6 +70,8 @@ class SemanticSearchRequest(BaseModel):
         ),
     ]
     top_k: Annotated[int, Field(ge=1, le=MAX_TOP_K)] = 5
+    min_score: Annotated[float | None, Field(ge=-1, le=1)] = None
+    filtreler: MetadataFiltersRequest | None = None
 
     @field_validator("olay")
     @classmethod
@@ -74,7 +102,11 @@ class SemanticSearchItem(BaseModel):
 class SemanticSearchResponse(BaseModel):
     sorgu: str
     top_k: int
+    aranan_aday_chunk_sayisi: int
+    minimum_benzerlik_skoru: float | None
+    filtreler: dict[str, str | bool]
     sonuc_sayisi: int
+    yeterli_sonuc_bulundu: bool
     embedding_modeli: str
     koleksiyon: str
     sure_ms: float
@@ -184,7 +216,17 @@ def create_app(
     ) -> dict[str, Any]:
         service = get_search_service(request)
         try:
-            return service.search(payload.olay, top_k=payload.top_k)
+            metadata_filters = (
+                payload.filtreler.model_dump(exclude_none=True)
+                if payload.filtreler is not None
+                else None
+            )
+            return service.search(
+                payload.olay,
+                top_k=payload.top_k,
+                min_score=payload.min_score,
+                metadata_filters=metadata_filters,
+            )
         except SemanticSearchError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

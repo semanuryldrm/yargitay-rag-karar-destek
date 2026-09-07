@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 import unicodedata
@@ -16,6 +17,10 @@ MIN_QUERY_CHARACTERS = 10
 MAX_QUERY_CHARACTERS = 4_000
 DEFAULT_TOP_K = 5
 MAX_TOP_K = 20
+SEARCH_EXPANSION_FACTOR = 5
+MAX_SEARCH_CANDIDATES = 100
+ALLOWED_DECISION_TYPES = frozenset({"hukuk", "ceza", "kurul"})
+ALLOWED_QUALITY_STATES = frozenset({"gecerli", "uyarili"})
 LEGAL_NOTICE = (
     "Sonuçlar yalnızca anlamsal benzerliğe göre sıralanmıştır; hukuki danışmanlık "
     "veya kesin hukuki görüş değildir."
@@ -41,7 +46,12 @@ class VectorStoreProtocol(Protocol):
     collection_name: str
 
     def search(
-        self, query_vector: Sequence[float], *, limit: int = 5, query_filter: Any = None
+        self,
+        query_vector: Sequence[float],
+        *,
+        limit: int = 5,
+        metadata_filters: Mapping[str, str | bool] | None = None,
+        score_threshold: float | None = None,
     ) -> tuple[SearchHit, ...]: ...
 
     def count(self) -> int: ...
@@ -72,6 +82,64 @@ def validate_top_k(value: int) -> int:
     if not 1 <= value <= MAX_TOP_K:
         raise QueryValidationError(f"top_k 1 ile {MAX_TOP_K} arasında olmalıdır")
     return value
+
+
+def validate_min_score(value: float | None) -> float | None:
+    """Validate an optional cosine-similarity lower bound."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise QueryValidationError("min_score sayısal veya null olmalıdır")
+    threshold = float(value)
+    if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+        raise QueryValidationError("min_score -1 ile 1 arasında olmalıdır")
+    return threshold
+
+
+def normalize_metadata_filters(
+    value: Mapping[str, Any] | None,
+) -> dict[str, str | bool]:
+    """Normalize the public allow-listed exact-match search filters."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise QueryValidationError("filtreler bir nesne olmalıdır")
+
+    allowed_fields = {
+        "karar_turu",
+        "daire",
+        "veri_kalite_durumu",
+        "metin_2000_karakter_sinirinda",
+    }
+    unknown_fields = set(value) - allowed_fields
+    if unknown_fields:
+        unknown = ", ".join(sorted(str(field) for field in unknown_fields))
+        raise QueryValidationError(f"Desteklenmeyen metadata filtresi: {unknown}")
+
+    normalized: dict[str, str | bool] = {}
+    for field, raw_value in value.items():
+        if raw_value is None:
+            continue
+        if field == "metin_2000_karakter_sinirinda":
+            if not isinstance(raw_value, bool):
+                raise QueryValidationError(f"{field} filtresi boolean olmalıdır")
+            normalized[field] = raw_value
+            continue
+        if not isinstance(raw_value, str):
+            raise QueryValidationError(f"{field} filtresi metin olmalıdır")
+        text = re.sub(r"\s+", " ", raw_value).strip()
+        if not text:
+            raise QueryValidationError(f"{field} filtresi boş olamaz")
+        if field == "karar_turu" and text not in ALLOWED_DECISION_TYPES:
+            raise QueryValidationError("karar_turu hukuk, ceza veya kurul olmalıdır")
+        if field == "veri_kalite_durumu" and text not in ALLOWED_QUALITY_STATES:
+            raise QueryValidationError(
+                "veri_kalite_durumu gecerli veya uyarili olmalıdır"
+            )
+        if field == "daire" and len(text) > 120:
+            raise QueryValidationError("daire filtresi en fazla 120 karakter olabilir")
+        normalized[field] = text
+    return normalized
 
 
 def _result_from_hit(hit: SearchHit, *, rank: int) -> dict[str, Any]:
@@ -141,6 +209,25 @@ def _result_from_hit(hit: SearchHit, *, rank: int) -> dict[str, Any]:
     }
 
 
+def _unique_decision_hits(
+    hits: Sequence[SearchHit], *, limit: int
+) -> tuple[SearchHit, ...]:
+    """Keep the highest-scoring chunk for each decision in ranked order."""
+    selected: list[SearchHit] = []
+    seen_decisions: set[str] = set()
+    for hit in hits:
+        decision_id = hit.payload.get("karar_id")
+        if not isinstance(decision_id, str) or not decision_id.strip():
+            raise SemanticSearchError("Qdrant sonucu geçerli karar_id içermiyor")
+        if decision_id in seen_decisions:
+            continue
+        selected.append(hit)
+        seen_decisions.add(decision_id)
+        if len(selected) == limit:
+            break
+    return tuple(selected)
+
+
 class SemanticSearchService:
     """Embed one legal-event query and retrieve nearest Yargitay chunks."""
 
@@ -174,26 +261,50 @@ class SemanticSearchService:
             "indexed_chunks": point_count,
         }
 
-    def search(self, query: str, *, top_k: int = DEFAULT_TOP_K) -> dict[str, Any]:
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int = DEFAULT_TOP_K,
+        min_score: float | None = None,
+        metadata_filters: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         normalized_query = normalize_query(query)
         validated_top_k = validate_top_k(top_k)
+        validated_min_score = validate_min_score(min_score)
+        validated_filters = normalize_metadata_filters(metadata_filters)
+        candidate_limit = min(
+            validated_top_k * SEARCH_EXPANSION_FACTOR,
+            MAX_SEARCH_CANDIDATES,
+        )
         started = time.perf_counter()
         try:
             query_vector = self.embedding_client.embed_text(normalized_query)
-            hits = self.vector_store.search(query_vector, limit=validated_top_k)
+            hits = self.vector_store.search(
+                query_vector,
+                limit=candidate_limit,
+                metadata_filters=validated_filters or None,
+                score_threshold=validated_min_score,
+            )
         except (EmbeddingClientError, VectorStoreError) as exc:
             raise SemanticSearchError(str(exc)) from exc
-        if len(hits) > validated_top_k:
+        if len(hits) > candidate_limit:
             raise SemanticSearchError("Qdrant returned more results than requested")
+
+        unique_hits = _unique_decision_hits(hits, limit=validated_top_k)
 
         results = [
             _result_from_hit(hit, rank=rank)
-            for rank, hit in enumerate(hits, start=1)
+            for rank, hit in enumerate(unique_hits, start=1)
         ]
         return {
             "sorgu": normalized_query,
             "top_k": validated_top_k,
+            "aranan_aday_chunk_sayisi": candidate_limit,
+            "minimum_benzerlik_skoru": validated_min_score,
+            "filtreler": validated_filters,
             "sonuc_sayisi": len(results),
+            "yeterli_sonuc_bulundu": bool(results),
             "embedding_modeli": self.embedding_client.model,
             "koleksiyon": self.vector_store.collection_name,
             "sure_ms": round((time.perf_counter() - started) * 1_000, 3),

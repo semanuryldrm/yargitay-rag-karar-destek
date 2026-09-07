@@ -8,7 +8,9 @@ from app.semantic_search import (
     QueryValidationError,
     SemanticSearchError,
     SemanticSearchService,
+    normalize_metadata_filters,
     normalize_query,
+    validate_min_score,
     validate_top_k,
 )
 from scripts.lmstudio_embeddings import EmbeddingClientError
@@ -35,8 +37,17 @@ class FakeVectorStore:
         self.point_count = count
         self.search_calls = []
 
-    def search(self, query_vector, *, limit=5, query_filter=None):
-        self.search_calls.append((list(query_vector), limit, query_filter))
+    def search(
+        self,
+        query_vector,
+        *,
+        limit=5,
+        metadata_filters=None,
+        score_threshold=None,
+    ):
+        self.search_calls.append(
+            (list(query_vector), limit, metadata_filters, score_threshold)
+        )
         return self.hits[:limit]
 
     def count(self):
@@ -79,6 +90,40 @@ class SemanticSearchTests(unittest.TestCase):
             validate_top_k(0)
         with self.assertRaises(QueryValidationError):
             validate_top_k(True)
+        self.assertEqual(validate_min_score(0.6), 0.6)
+        self.assertIsNone(validate_min_score(None))
+        with self.assertRaises(QueryValidationError):
+            validate_min_score(float("nan"))
+        with self.assertRaises(QueryValidationError):
+            validate_min_score(1.1)
+
+    def test_normalizes_allow_listed_metadata_filters(self):
+        self.assertEqual(
+            normalize_metadata_filters(
+                {
+                    "karar_turu": "hukuk",
+                    "daire": "  7.   Hukuk Dairesi ",
+                    "veri_kalite_durumu": "gecerli",
+                    "metin_2000_karakter_sinirinda": False,
+                }
+            ),
+            {
+                "karar_turu": "hukuk",
+                "daire": "7. Hukuk Dairesi",
+                "veri_kalite_durumu": "gecerli",
+                "metin_2000_karakter_sinirinda": False,
+            },
+        )
+        for invalid in (
+            {"bilinmeyen": "deger"},
+            {"karar_turu": "idari"},
+            {"veri_kalite_durumu": "kotu"},
+            {"metin_2000_karakter_sinirinda": "false"},
+            {"daire": "   "},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(QueryValidationError):
+                    normalize_metadata_filters(invalid)
 
     def test_embeds_query_and_returns_ranked_source_metadata(self):
         hits = (
@@ -94,14 +139,24 @@ class SemanticSearchTests(unittest.TestCase):
         )
 
         response = service.search(
-            "  İşveren sözleşmemi haksız şekilde feshetti.  ", top_k=2
+            "  İşveren sözleşmemi haksız şekilde feshetti.  ",
+            top_k=2,
+            min_score=0.6,
+            metadata_filters={"karar_turu": "hukuk"},
         )
 
         self.assertEqual(embedding.queries, [
             "İşveren sözleşmemi haksız şekilde feshetti."
         ])
-        self.assertEqual(store.search_calls, [([1.0, 0.0, 0.0], 2, None)])
+        self.assertEqual(
+            store.search_calls,
+            [([1.0, 0.0, 0.0], 10, {"karar_turu": "hukuk"}, 0.6)],
+        )
         self.assertEqual(response["sonuc_sayisi"], 2)
+        self.assertEqual(response["aranan_aday_chunk_sayisi"], 10)
+        self.assertTrue(response["yeterli_sonuc_bulundu"])
+        self.assertEqual(response["minimum_benzerlik_skoru"], 0.6)
+        self.assertEqual(response["filtreler"], {"karar_turu": "hukuk"})
         self.assertEqual(response["sonuclar"][0]["sira"], 1)
         self.assertEqual(response["sonuclar"][0]["benzerlik_skoru"], 0.812346)
         self.assertEqual(response["sonuclar"][0]["kaynak_lisans"], "CC BY 4.0")
@@ -147,6 +202,36 @@ class SemanticSearchTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SemanticSearchError, "LM Studio kapalı"):
             service.search("İşveren sözleşmemi geçersiz feshetti.")
+
+    def test_empty_thresholded_search_is_explicit(self):
+        service = SemanticSearchService(
+            embedding_client=FakeEmbeddingClient(),
+            vector_store=FakeVectorStore(()),
+            expected_point_count=3,
+        )
+        response = service.search(
+            "İşveren sözleşmemi geçersiz feshetti.", min_score=0.75
+        )
+        self.assertEqual(response["sonuc_sayisi"], 0)
+        self.assertFalse(response["yeterli_sonuc_bulundu"])
+
+    def test_returns_only_highest_scoring_chunk_per_decision(self):
+        hits = (
+            SearchHit("d1:c0001", 0.9, result_payload("d1:c0001")),
+            SearchHit("d1:c0002", 0.8, result_payload("d1:c0002")),
+            SearchHit("d2:c0001", 0.7, result_payload("d2:c0001")),
+        )
+        service = SemanticSearchService(
+            embedding_client=FakeEmbeddingClient(),
+            vector_store=FakeVectorStore(hits),
+            expected_point_count=3,
+        )
+        response = service.search(
+            "İşveren sözleşmemi geçersiz feshetti.", top_k=2
+        )
+        self.assertEqual(
+            [item["karar_id"] for item in response["sonuclar"]], ["d1", "d2"]
+        )
 
 
 if __name__ == "__main__":
