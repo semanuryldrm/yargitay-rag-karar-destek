@@ -9,6 +9,7 @@ from app.rag_answer import (
     RAGAnswerService,
     STANDARD_INSUFFICIENT_ANSWER,
     SYSTEM_PROMPT,
+    ensure_quality_limit_disclosure,
     prepare_sources,
     validate_grounded_answer,
 )
@@ -130,7 +131,8 @@ class RAGAnswerTests(unittest.TestCase):
         self.assertIn("[K1]", input_text)
         self.assertIn("2013/2027", input_text)
         self.assertIn("Fesih nedeninin", input_text)
-        self.assertEqual(token_limit, 700)
+        self.assertEqual(token_limit, 800)
+        self.assertEqual(response["model_cagri_sayisi"], 1)
 
     def test_insufficient_sources_skip_gemma_and_return_standard_answer(self):
         chat = FakeChatClient()
@@ -148,6 +150,7 @@ class RAGAnswerTests(unittest.TestCase):
         self.assertEqual(response["bulunan_kaynak_sayisi"], 1)
         self.assertEqual(chat.calls, [])
         self.assertIsNone(response["model_response_id"])
+        self.assertEqual(response["model_cagri_sayisi"], 0)
 
     def test_health_checks_live_chat_model(self):
         chat = FakeChatClient()
@@ -222,6 +225,71 @@ class RAGAnswerTests(unittest.TestCase):
         invalid_warnings["veri_kalite_uyarilari"] = "uyarı"
         with self.assertRaisesRegex(RAGAnswerError, "veri kalitesi"):
             prepare_sources([invalid_warnings])
+
+    def test_includes_data_quality_warnings_in_model_context(self):
+        warned = search_result("d1")
+        warned["veri_kalite_uyarilari"] = ["karar metni kaynakta kesilmiş"]
+
+        sources, context = prepare_sources([warned])
+
+        self.assertEqual(
+            sources[0]["veri_kalite_uyarilari"],
+            ["karar metni kaynakta kesilmiş"],
+        )
+        self.assertIn(
+            "Veri kalitesi uyarıları: kaynakta belirtilen ek bir veri kalitesi uyarısı bulunuyor",
+            context,
+        )
+        self.assertIn("kararın tam metni gibi sunma", SYSTEM_PROMPT)
+
+    def test_adds_deterministic_quality_note_when_model_omits_it(self):
+        warned = search_result("d1")
+        warned["veri_kalite_uyarilari"] = [
+            "kaynak_metin_2000_karakter_sinirinda"
+        ]
+        sources, _ = prepare_sources([warned])
+        answer = (
+            "Değerlendirme\nKaynakta fesih incelenmiştir [K1].\n\n"
+            f"Sınırlamalar\nKaynakta miktar yoktur.\n{CLOSING_NOTICE}"
+        )
+
+        disclosed = ensure_quality_limit_disclosure(answer, sources)
+
+        self.assertIn("Veri kalitesi notu: [K1]", disclosed)
+        self.assertIn("2.000 karakter sınırında", disclosed)
+        self.assertTrue(disclosed.endswith(CLOSING_NOTICE))
+
+    def test_retries_once_when_first_model_answer_is_invalid(self):
+        class RetryChatClient(FakeChatClient):
+            def generate(self, *, system_prompt, input_text, max_output_tokens):
+                self.calls.append((system_prompt, input_text, max_output_tokens))
+                if len(self.calls) == 1:
+                    text = "Değerlendirme\nEksik kapanış [K1]."
+                else:
+                    text = (
+                        "Değerlendirme\nKaynaklar birlikte incelenmiştir [K1, K2].\n\n"
+                        f"Sınırlamalar\nKaynakta ayrıntı yoktur.\n{CLOSING_NOTICE}"
+                    )
+                return ChatGeneration(
+                    text=text,
+                    model=self.model,
+                    response_id=f"resp_{len(self.calls)}",
+                    stats={"reasoning_output_tokens": 0},
+                )
+
+        chat = RetryChatClient()
+        service = RAGAnswerService(
+            semantic_search=FakeSemanticSearch(
+                [search_result("d1"), search_result("d2")]
+            ),
+            chat_client=chat,
+        )
+
+        response = service.answer("İş sözleşmem gerekçesiz biçimde feshedildi.")
+
+        self.assertEqual(response["model_cagri_sayisi"], 2)
+        self.assertEqual(response["model_response_id"], "resp_2")
+        self.assertIn("ÖNCEKİ YANIT", chat.calls[1][1])
 
 
 if __name__ == "__main__":

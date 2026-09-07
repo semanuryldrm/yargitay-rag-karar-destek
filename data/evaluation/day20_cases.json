@@ -1,0 +1,126 @@
+{
+  "version": "1.0",
+  "description": "Farklı hukuk alanlarında çapa karar geri çağırma ve Yargıtay kapsamı dışındaki idari uyuşmazlıkları reddetme testi.",
+  "cases": [
+    {
+      "case_id": "is_hukuku_gecersiz_fesih",
+      "hukuk_alani": "iş hukuku",
+      "query": "İşveren belirsiz süreli iş sözleşmemi geçerli bir neden göstermeden feshetti. İşe iade ve işe başlatmama tazminatı talep edebilir miyim?",
+      "expected_decision_ids": ["d1113966700"],
+      "expected_chamber": "7. Hukuk Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "esya_hukuku_tapu_tescil",
+      "hukuk_alani": "eşya hukuku",
+      "query": "Belediyeden bedelini ödeyerek satın aldığım taşınmaz payının tapusu verilmedi. Tapu kaydının iptali ve adıma tescilini istiyorum.",
+      "expected_decision_ids": ["d581878400"],
+      "expected_chamber": "14. Hukuk Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "ceza_uyusturucu_eksik_sorusturma",
+      "hukuk_alani": "ceza hukuku",
+      "query": "Uyuşturucu madde ticareti suçunda tanık dinlenmeden ve eksik soruşturmayla mahkûmiyet kararı verilmiş. Temyizde nasıl değerlendirilir?",
+      "expected_decision_ids": ["d480864200"],
+      "expected_chamber": "9. Ceza Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "aile_hukuku_bosanma_tebligat",
+      "hukuk_alani": "aile hukuku",
+      "query": "Karşılıklı boşanma davasında karar ve temyiz dilekçesi taraf vekiline tebliğ edilmemiş. Tebliğ belgesi dosyaya alındıktan sonra temyiz incelemesi yapılabilir mi?",
+      "expected_decision_ids": ["d499260100"],
+      "expected_chamber": "2. Hukuk Dairesi",
+      "rag_test": false
+    },
+    {
+      "case_id": "fikri_mulkiyet_marka_iltibas",
+      "hukuk_alani": "fikrî mülkiyet hukuku",
+      "query": "Tanınmış Türkçe marka ile anlamı onun tercümesine benzeyen İngilizce marka arasında iltibas bulunduğu ve markanın kullanılmadığı gerekçeleriyle hükümsüzlük ve sicilden terkin talep edilebilir mi?",
+      "expected_decision_ids": ["d1031310100"],
+      "expected_chamber": "11. Hukuk Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "ceza_hirsizlik_sadirvan",
+      "hukuk_alani": "ceza hukuku",
+      "query": "Cami avlusundaki şadırvanda asılı montun cebinden telefon çalındı. Şadırvanın kapalı olup olmadığı araştırılmadan nitelikli hırsızlık hükmü kurulması eksik kovuşturma mıdır?",
+      "expected_decision_ids": ["d447126500"],
+      "expected_chamber": "2. Ceza Dairesi",
+      "rag_test": false
+    },
+    {
+      "case_id": "ceza_nitelikli_dolandiricilik",
+      "hukuk_alani": "ceza hukuku",
+      "query": "Nevresim satma bahanesiyle eve gelen kişiler büyü bozacaklarını söyleyip yumurta ve patates göstererek altınları beze sardırıp alarak kaçmış. Bu eylem nitelikli dolandırıcılık mıdır?",
+      "expected_decision_ids": ["d649577900"],
+      "expected_chamber": "15. Ceza Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "sigorta_trafik_destekten_yoksun_kalma",
+      "hukuk_alani": "sigorta hukuku",
+      "query": "Tek taraflı trafik kazasında araç sürücüsü öldü. Desteğin tam kusurlu olduğu savunmasına rağmen yakınları trafik sigortacısından destekten yoksun kalma tazminatı isteyebilir mi?",
+      "expected_decision_ids": ["d329738600"],
+      "expected_chamber": "17. Hukuk Dairesi",
+      "rag_test": false
+    },
+    {
+      "case_id": "is_kazasi_surekli_is_goremezlik",
+      "hukuk_alani": "sosyal güvenlik hukuku",
+      "query": "Freze ustası iş kazasında parmaklarını kaybederek sürekli iş göremez duruma düştü. İşverenden maddi ve manevi zararlarının giderilmesini isteyebilir mi?",
+      "expected_decision_ids": ["d854982300"],
+      "expected_chamber": "10. Hukuk Dairesi",
+      "rag_test": true
+    },
+    {
+      "case_id": "kadastro_mirascilik_nufus_kaydi",
+      "hukuk_alani": "kadastro ve miras hukuku",
+      "query": "Kadastro davasında davacıların miras bırakanla bağını gösteren verasete esas açık nüfus kayıtları dosyada yoksa temyiz incelemesinden önce kayıtlar getirtilmeli mi?",
+      "expected_decision_ids": ["d363101300"],
+      "expected_chamber": "16. Hukuk Dairesi",
+      "rag_test": false
+    },
+    {
+      "case_id": "alan_disi_vergi_tarhiyati",
+      "hukuk_alani": "vergi hukuku",
+      "query": "Şirket adına vergi inceleme raporuyla kurumlar vergisi tarh edildi ve vergi ziyaı cezası kesildi. Vergi mahkemesinde tarhiyatın iptalini istiyorum.",
+      "expected_decision_ids": [],
+      "expected_chamber": null,
+      "rag_test": false
+    },
+    {
+      "case_id": "alan_disi_memur_atama",
+      "hukuk_alani": "idare hukuku",
+      "query": "Kamu kurumundaki memur kadrosuna atanma talebim idari işlemle reddedildi. İşlemin iptali ve yürütmenin durdurulması için idare mahkemesine başvurmak istiyorum.",
+      "expected_decision_ids": [],
+      "expected_chamber": null,
+      "rag_test": false
+    },
+    {
+      "case_id": "alan_disi_imar_plani",
+      "hukuk_alani": "imar hukuku",
+      "query": "Belediyenin imar planında taşınmazım park alanına ayrıldı. Plan değişikliğinin kamu yararına aykırı olduğu gerekçesiyle iptal davası açmak istiyorum.",
+      "expected_decision_ids": [],
+      "expected_chamber": null,
+      "rag_test": false
+    },
+    {
+      "case_id": "alan_disi_kamu_ihalesi",
+      "hukuk_alani": "kamu ihale hukuku",
+      "query": "Kamu ihalesinde teklifimiz değerlendirme dışı bırakıldı. İhale komisyonu kararının iptali için Kamu İhale Kurumuna itirazen şikâyet ve idari dava yollarını araştırıyorum.",
+      "expected_decision_ids": [],
+      "expected_chamber": null,
+      "rag_test": false
+    },
+    {
+      "case_id": "alan_disi_sinir_disi",
+      "hukuk_alani": "yabancılar hukuku",
+      "query": "Hakkımda verilen sınır dışı etme ve idari gözetim kararının iptali için idare mahkemesine başvurmak ve yürütmenin durdurulmasını istemek istiyorum.",
+      "expected_decision_ids": [],
+      "expected_chamber": null,
+      "rag_test": false
+    }
+  ]
+}

@@ -10,6 +10,7 @@ data/raw/yargitay_*_state.json
 data/processed/yargitay_*.jsonl
 data/processed/yargitay_*_stats.json
 data/processed/yargitay_*_state.json
+data/processed/yargitay_day20_evaluation.json
 data/vector_store/
 logs/*.log
 logs/*.jsonl

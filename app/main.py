@@ -33,7 +33,7 @@ from scripts.lmstudio_chat import LMStudioChatClient
 from scripts.qdrant_vector_store import QdrantVectorStore
 
 
-API_VERSION = "1.3.0"
+API_VERSION = "1.4.0"
 
 
 class SearchServiceProtocol(Protocol):
@@ -193,6 +193,7 @@ class RAGAnswerResponse(BaseModel):
     llm_cagrildi: bool
     model_istatistikleri: dict[str, int | float] | None
     model_response_id: str | None
+    model_cagri_sayisi: int
     sure_ms: float
     uyari: str
     kaynaklar: list[RAGSourceItem]

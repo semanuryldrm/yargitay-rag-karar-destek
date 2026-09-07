@@ -83,8 +83,11 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Altı hukuki sorguyla `top_k`, eşik ve filtre seçenekleri gerçek 31.544 noktalı indekste; üç chunk boyutu ise 31 kararlık zor-negatif havuzda karşılaştırıldı.
 - Bulunan kararları `[K1]` biçiminde etiketleyip Gemma 4 12B QAT modeline aktaran kaynaklı RAG cevap zinciri geliştirildi; yetersiz kaynakta model çağrılmadan güvenli duruş sağlandı.
 - Gemma çıktılarında geçerli kaynak etiketi, reasoning'in kapalı olması, kesin sonuç vermeme ve zorunlu hukuki uyarı kuralları uygulama katmanında doğrulandı.
-- FastAPI servisleri `1.3.0` sürümünde tamamlandı; canlı embedding, Qdrant ve Gemma denetimi yapan sistem durumu uç noktası ile standart `422` istek doğrulama yanıtları eklendi.
+- FastAPI servisleri `1.4.0` sürümünde tamamlandı; canlı embedding, Qdrant ve Gemma denetimi yapan sistem durumu uç noktası ile standart `422` istek doğrulama yanıtları eklendi.
 - Boş, 4.000 karakterlik, aşırı uzun, hatalı ve normal sorgular gerçek yerel servis üzerinde sınandı; Bruno koleksiyonundaki dokuz isteğin tamamı geçti ve yeniden çalıştırılabilir uçtan uca test aracı eklendi.
+- On kapsam içi ve beş alan dışı olaydan oluşan sabit test setiyle `top_k`/eşik ayarları değerlendirildi; RAG varsayılanı `top_k=10`, `min_score=0,65` olarak güncellendi.
+- Dört chunk ayarı 102 gerçek kararlık zor-negatif havuzda karşılaştırıldı; 800/200 tam yeniden indeksleme için aday seçilirken sınırlı deney nedeniyle mevcut 1.200/200 indeksi korundu.
+- RAG promptu `1.1` sürümüne çıkarıldı; veri kalitesi sınırlaması açıklaması ve geçersiz model çıktısında tek seferlik güvenli yeniden üretim eklendi.
 
 ## Toplu Veri Kaynağı
 
@@ -206,9 +209,11 @@ python scripts/evaluate_semantic_search_quality.py
 
 ## Gemma RAG Cevap Zinciri
 
-`POST /api/v1/rag-answer` uç noktası semantik arama ile bulunan benzersiz kararları Gemma 4 12B QAT modeline aktararak kaynaklı bir değerlendirme üretir. Varsayılan `top_k=5` ve `min_score=0,65` değerleri kullanılır; en az iki kaynak bulunamazsa Gemma çağrılmaz ve standart yetersiz bilgi cevabı döner. Chat modeli `YARGITAY_RAG_CHAT_MODEL` ortam değişkeniyle yapılandırılabilir.
+`POST /api/v1/rag-answer` uç noktası semantik arama ile bulunan benzersiz kararları Gemma 4 12B QAT modeline aktararak kaynaklı bir değerlendirme üretir. 20. gün değerlendirmesiyle seçilen varsayılan `top_k=10` ve `min_score=0,65` değerleri kullanılır; en az iki kaynak bulunamazsa Gemma çağrılmaz ve standart yetersiz bilgi cevabı döner. Chat modeli `YARGITAY_RAG_CHAT_MODEL` ortam değişkeniyle yapılandırılabilir.
 
 Her karar `[K1]`, `[K2]` biçiminde etiketlenir ve cevapta kullanılan etiketler gerçek kaynak listesiyle doğrulanır. Bilinmeyen kaynak etiketi, kaynaksız cevap, kesin dava sonucu ifadesi veya zorunlu hukuki uyarının eksikliği güvenli biçimde reddedilir. LM Studio isteği `reasoning=off`, `temperature=0` ve `stream=false` seçenekleriyle gönderilir; model kimliği ile token istatistikleri doğrulanır.
+
+Prompt `1.1` sürümünde kaynak veri kalitesi uyarılarını Gemma bağlamına taşır. Model uyarılı bir kaynağın eksik olabileceğini belirtmezse uygulama kaynak etiketiyle bir veri kalitesi notu ekler. Yapısal doğrulamayı geçmeyen model çıktısı en fazla bir kez yeniden üretilir; çağrı sayısı yanıttaki `model_cagri_sayisi` alanında gösterilir.
 
 Bruno koleksiyonundaki `04-rag-answer.bru` kaynak bulunan normal akışı, `05-rag-insufficient-sources.bru` ise alan dışı sorguda Gemma çağrılmadan güvenli duruşu test eder. Gerçek uçtan uca işe iade testinde beş karar kullanılmış, cevap `[K1]`-`[K5]` etiketlerini içermiş ve reasoning tokenı sıfır kalmıştır. Uygulama ayrıntıları ve test sonuçları `docs/gun18_gemma_rag_cevap_zinciri.md` dosyasındadır.
 
@@ -223,6 +228,20 @@ python scripts/run_day19_e2e.py
 ```
 
 Araç sistem durumunu, üç hatalı istek sınıfını, 4.000 karakterlik geçerli sorguyu, normal semantik aramayı ve embedding-Qdrant-Gemma zincirini denetler. Gerçek koşuda bütün kontroller geçti; normal sorguda beş benzersiz karar bulundu, beşi Gemma cevabında kaynak olarak kullanıldı ve reasoning tokenı sıfır kaldı. Bruno masaüstü Runner'da koleksiyondaki dokuz isteğin dokuzu geçti. Ayrıntılar `docs/gun19_fastapi_entegrasyon_ve_uctan_uca_testler.md` dosyasındadır.
+
+## Sistem Değerlendirmesi ve Doğruluk İyileştirmesi
+
+LM Studio açık ve FastAPI kapalıyken 20. gün değerlendirmesi şu komutla yeniden çalıştırılabilir:
+
+```powershell
+python scripts/evaluate_day20_system.py
+```
+
+Araç 15 olaylık sabit test setini 31.544 noktalı Qdrant indeksinde çalıştırır; 28 `top_k`/eşik bileşimini, dört chunk yapılandırmasını ve seçili altı gerçek Gemma cevabını değerlendirir. Son koşuda önerilen `top_k=10`, `min_score=0,65` ayarı çapa recall `0,60`, MRR `0,444444`, alan dışı güvenli reddetme `1,00` ve dengeli doğruluk `0,80` üretti. Altı canlı RAG cevabının tamamı kaynak, veri kalitesi ve zorunlu uyarı denetimlerinden geçti; medyan semantik arama süresi `77,849 ms`, medyan RAG süresi `17.176,865 ms` oldu.
+
+102 gerçek kararlık aday havuzunda 800/200 chunk ayarı Recall@10 `0,80` ve MRR@10 `0,622500` ile en iyi aday oldu. Sonuç tam indeks yeniden oluşturma maliyetini ve genel doğruluğu kanıtlamadığı için mevcut 1.200/200 koleksiyonu korunmuştur. Test seti, hata nedenleri, bütün metrikler ve sınırlamalar `docs/gun20_sistem_degerlendirmesi_ve_dogruluk_iyilestirmesi.md` dosyasındadır.
+
+Nihai kontrolde altı gerçek Gemma olayının altısı, Bruno masaüstü Runner'daki 10 isteğin 10'u ve projenin 132 otomatik testinin tamamı geçti. Güncel API sürümü `1.4.0`, RAG prompt sürümü `1.1`'dir.
 
 ## Uyarı
 

@@ -75,7 +75,7 @@ class FakeRAGService:
     def health(self):
         return {
             "chat_model": "google/gemma-4-12b-qat",
-            "rag_prompt_version": "1.0",
+            "rag_prompt_version": "1.1",
             "minimum_rag_sources": 2,
         }
 
@@ -83,7 +83,7 @@ class FakeRAGService:
         self,
         query,
         *,
-        top_k=5,
+        top_k=10,
         min_score=0.65,
         metadata_filters=None,
     ):
@@ -106,7 +106,7 @@ class FakeRAGService:
             "embedding_modeli": "test-embedding-model",
             "koleksiyon": "test_collection",
             "chat_modeli": "google/gemma-4-12b-qat",
-            "prompt_surumu": "1.0",
+            "prompt_surumu": "1.1",
             "llm_cagrildi": True,
             "model_istatistikleri": {
                 "input_tokens": 300,
@@ -114,6 +114,7 @@ class FakeRAGService:
                 "reasoning_output_tokens": 0,
             },
             "model_response_id": "resp_test",
+            "model_cagri_sayisi": 1,
             "sure_ms": 50.0,
             "uyari": "Hukuki danışmanlık değildir.",
             "kaynaklar": [
@@ -138,6 +139,19 @@ class FakeRAGService:
         }
 
 class FastAPIApplicationTests(unittest.TestCase):
+    def test_rag_request_uses_evaluated_defaults(self):
+        rag = FakeRAGService()
+        with TestClient(
+            create_app(search_service=FakeSearchService(), rag_service=rag)
+        ) as client:
+            response = client.post(
+                "/api/v1/rag-answer",
+                json={"olay": "İşveren sözleşmemi geçersiz nedenle feshetti."},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(rag.calls[0][1:3], (10, 0.65))
+
     def test_health_and_semantic_search_contract(self):
         service = FakeSearchService()
         with TestClient(create_app(search_service=service)) as client:

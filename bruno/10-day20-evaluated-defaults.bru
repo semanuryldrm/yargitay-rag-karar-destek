@@ -1,0 +1,40 @@
+meta {
+  name: 20. Gün Değerlendirilmiş RAG Varsayılanları
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/rag-answer
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İş yerindeki makinede meydana gelen kaza nedeniyle parmaklarımda kalıcı kayıp ve sürekli iş göremezlik oluştu. Maddi ve manevi tazminat talep edebilir miyim?"
+  }
+}
+
+tests {
+  test("Değerlendirilmiş varsayılan ayarlar kullanılır", function() {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.minimum_benzerlik_skoru).to.equal(0.65);
+    expect(body.prompt_surumu).to.equal("1.1");
+    expect(body.bulunan_kaynak_sayisi).to.be.at.least(2);
+    expect(body.bulunan_kaynak_sayisi).to.be.at.most(10);
+  });
+
+  test("Veri kalitesi sınırlaması kullanıcıya açıklanır", function() {
+    const body = res.getBody();
+    expect(body.durum).to.equal("tamamlandi");
+    expect(body.cevap).to.match(/Veri kalitesi|2000 karakter|2\.000 karakter|tam metin|eksik olabilir/i);
+    expect(body.cevap).to.match(/Somut olayın özelliklerine göre sonuç değişebilir; bu değerlendirme hukuki danışmanlık değildir\.$/);
+  });
+}
