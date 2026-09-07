@@ -1,0 +1,47 @@
+meta {
+  name: Yetersiz Kaynakta Güvenli Duruş
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/rag-answer
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "Belediyenin yeni imar planında taşınmazım park alanına ayrıldı. İdare mahkemesinde planın iptalini ve yürütmenin durdurulmasını istiyorum.",
+    "top_k": 5,
+    "min_score": 0.75
+  }
+}
+
+tests {
+  test("HTTP 200 ve yetersiz kaynak durumu döner", function() {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.durum).to.equal("yetersiz_kaynak");
+    expect(body.degerlendirme_uretildi).to.equal(false);
+  });
+
+  test("Yetersiz kaynakta Gemma çağrılmaz", function() {
+    const body = res.getBody();
+    expect(body.llm_cagrildi).to.equal(false);
+    expect(body.kullanilan_kaynak_sayisi).to.equal(0);
+    expect(body.model_istatistikleri).to.equal(null);
+    expect(body.model_response_id).to.equal(null);
+  });
+
+  test("Standart yetersiz bilgi cevabı döner", function() {
+    expect(res.getBody().cevap).to.equal(
+      "Gönderilen olayla yeterli düzeyde benzer ve güvenilir Yargıtay kararı bulunamadığı için kaynaklara dayalı bir değerlendirme üretilemedi."
+    );
+  });
+}

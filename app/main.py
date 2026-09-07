@@ -1,4 +1,4 @@
-"""FastAPI entry point for the local Yargitay semantic search service."""
+"""FastAPI entry point for the local Yargitay RAG service."""
 
 from __future__ import annotations
 
@@ -10,6 +10,13 @@ from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import Settings
+from app.rag_answer import (
+    DEFAULT_RAG_MIN_SCORE,
+    DEFAULT_RAG_TOP_K,
+    PROMPT_VERSION,
+    RAGAnswerError,
+    RAGAnswerService,
+)
 from app.semantic_search import (
     LEGAL_NOTICE,
     MAX_QUERY_CHARACTERS,
@@ -20,10 +27,11 @@ from app.semantic_search import (
     normalize_query,
 )
 from scripts.lmstudio_embeddings import LMStudioEmbeddingClient
+from scripts.lmstudio_chat import LMStudioChatClient
 from scripts.qdrant_vector_store import QdrantVectorStore
 
 
-API_VERSION = "1.1.0"
+API_VERSION = "1.2.0"
 
 
 class SearchServiceProtocol(Protocol):
@@ -35,6 +43,19 @@ class SearchServiceProtocol(Protocol):
         *,
         top_k: int = 5,
         min_score: float | None = None,
+        metadata_filters: dict[str, str | bool] | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class RAGAnswerServiceProtocol(Protocol):
+    def health(self) -> dict[str, Any]: ...
+
+    def answer(
+        self,
+        query: str,
+        *,
+        top_k: int = DEFAULT_RAG_TOP_K,
+        min_score: float = DEFAULT_RAG_MIN_SCORE,
         metadata_filters: dict[str, str | bool] | None = None,
     ) -> dict[str, Any]: ...
 
@@ -79,6 +100,27 @@ class SemanticSearchRequest(BaseModel):
         return normalize_query(value)
 
 
+class RAGAnswerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    olay: Annotated[
+        str,
+        Field(
+            min_length=MIN_QUERY_CHARACTERS,
+            max_length=MAX_QUERY_CHARACTERS,
+            description="Kaynaklara dayalı değerlendirilecek hukuki olay",
+        ),
+    ]
+    top_k: Annotated[int, Field(ge=1, le=MAX_TOP_K)] = DEFAULT_RAG_TOP_K
+    min_score: Annotated[float, Field(ge=-1, le=1)] = DEFAULT_RAG_MIN_SCORE
+    filtreler: MetadataFiltersRequest | None = None
+
+    @field_validator("olay")
+    @classmethod
+    def normalize_event(cls, value: str) -> str:
+        return normalize_query(value)
+
+
 class SemanticSearchItem(BaseModel):
     sira: int
     benzerlik_skoru: float
@@ -114,21 +156,69 @@ class SemanticSearchResponse(BaseModel):
     sonuclar: list[SemanticSearchItem]
 
 
+class RAGSourceItem(BaseModel):
+    kaynak_etiketi: str
+    sira: int
+    benzerlik_skoru: float
+    chunk_id: str
+    karar_id: str
+    daire: str
+    esas_no: str | None
+    karar_no: str | None
+    karar_tarihi: str | None
+    baslik: str
+    chunk_metni: str
+    veri_kalite_uyarilari: list[str]
+    kaynak: str
+    kaynak_url: str
+    kaynak_lisans: str
+
+
+class RAGAnswerResponse(BaseModel):
+    sorgu: str
+    durum: Literal["tamamlandi", "yetersiz_kaynak"]
+    degerlendirme_uretildi: bool
+    cevap: str
+    bulunan_kaynak_sayisi: int
+    kullanilan_kaynak_sayisi: int
+    minimum_gerekli_kaynak: int
+    minimum_benzerlik_skoru: float
+    filtreler: dict[str, str | bool]
+    chat_modeli: str
+    prompt_surumu: str
+    llm_cagrildi: bool
+    model_istatistikleri: dict[str, int | float] | None
+    model_response_id: str | None
+    sure_ms: float
+    uyari: str
+    kaynaklar: list[RAGSourceItem]
+
+
 class HealthResponse(BaseModel):
     status: str
     api_version: str
     embedding_model: str
     qdrant_collection: str
     indexed_chunks: int
+    chat_model: str | None = None
+    rag_prompt_version: str | None = None
+    minimum_rag_sources: int | None = None
 
 
-def _build_live_service(settings: Settings) -> tuple[SemanticSearchService, QdrantVectorStore]:
+def _build_live_services(
+    settings: Settings,
+) -> tuple[SemanticSearchService, RAGAnswerService, QdrantVectorStore]:
     validated = settings.validate()
     embedding_client = LMStudioEmbeddingClient(
         base_url=validated.lmstudio_base_url,
         model=validated.embedding_model,
     )
     embedding_client.ensure_model_available()
+    chat_client = LMStudioChatClient(
+        base_url=validated.lmstudio_base_url,
+        model=validated.chat_model,
+    )
+    chat_client.ensure_model_available()
     vector_store = QdrantVectorStore(
         path=validated.qdrant_path,
         collection_name=validated.qdrant_collection,
@@ -143,7 +233,11 @@ def _build_live_service(settings: Settings) -> tuple[SemanticSearchService, Qdra
             expected_point_count=validated.expected_point_count,
         )
         service.health()
-        return service, vector_store
+        rag_service = RAGAnswerService(
+            semantic_search=service,
+            chat_client=chat_client,
+        )
+        return service, rag_service, vector_store
     except Exception:
         vector_store.close()
         raise
@@ -152,6 +246,7 @@ def _build_live_service(settings: Settings) -> tuple[SemanticSearchService, Qdra
 def create_app(
     *,
     search_service: SearchServiceProtocol | None = None,
+    rag_service: RAGAnswerServiceProtocol | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
     """Create the API with a live or test-injected semantic search service."""
@@ -162,10 +257,15 @@ def create_app(
         owned_store: QdrantVectorStore | None = None
         try:
             if search_service is None:
-                service, owned_store = _build_live_service(configured_settings)
+                service, live_rag_service, owned_store = _build_live_services(
+                    configured_settings
+                )
                 application.state.search_service = service
+                application.state.rag_service = live_rag_service
             else:
                 application.state.search_service = search_service
+                if rag_service is not None:
+                    application.state.rag_service = rag_service
             yield
         finally:
             if owned_store is not None:
@@ -176,7 +276,8 @@ def create_app(
         version=API_VERSION,
         description=(
             "Kullanıcının hukuki olayına anlamsal olarak benzeyen Yargıtay karar "
-            "parçalarını döndürür. " + LEGAL_NOTICE
+            "parçalarını bulur ve isteğe bağlı olarak Gemma ile kaynaklı bir "
+            "değerlendirme üretir. " + LEGAL_NOTICE
         ),
         lifespan=lifespan,
     )
@@ -193,6 +294,18 @@ def create_app(
             )
         return service
 
+    def get_rag_service(request: Request) -> RAGAnswerServiceProtocol:
+        service = getattr(request.app.state, "rag_service", None)
+        if service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "rag_answer_unavailable",
+                    "message": "RAG cevap servisi hazır değil",
+                },
+            )
+        return service
+
     @application.get("/health", response_model=HealthResponse, tags=["sistem"])
     def health(request: Request) -> dict[str, Any]:
         service = get_search_service(request)
@@ -203,7 +316,15 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "dependency_unavailable", "message": str(exc)},
             ) from exc
-        return {"api_version": API_VERSION, **details}
+        rag_details: dict[str, Any] = {
+            "chat_model": None,
+            "rag_prompt_version": None,
+            "minimum_rag_sources": None,
+        }
+        available_rag_service = getattr(request.app.state, "rag_service", None)
+        if available_rag_service is not None:
+            rag_details = available_rag_service.health()
+        return {"api_version": API_VERSION, **details, **rag_details}
 
     @application.post(
         "/api/v1/semantic-search",
@@ -234,6 +355,34 @@ def create_app(
                     "code": "semantic_search_failed",
                     "message": str(exc),
                 },
+            ) from exc
+
+    @application.post(
+        "/api/v1/rag-answer",
+        response_model=RAGAnswerResponse,
+        tags=["rag"],
+    )
+    def rag_answer(
+        payload: RAGAnswerRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        service = get_rag_service(request)
+        metadata_filters = (
+            payload.filtreler.model_dump(exclude_none=True)
+            if payload.filtreler is not None
+            else None
+        )
+        try:
+            return service.answer(
+                payload.olay,
+                top_k=payload.top_k,
+                min_score=payload.min_score,
+                metadata_filters=metadata_filters,
+            )
+        except RAGAnswerError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "rag_answer_failed", "message": str(exc)},
             ) from exc
 
     return application

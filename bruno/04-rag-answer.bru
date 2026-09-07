@@ -1,0 +1,63 @@
+meta {
+  name: Gemma Kaynaklı RAG Cevabı
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/rag-answer
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İşveren belirsiz süreli iş sözleşmemi geçerli bir neden göstermeden feshetti. İşe iade ve işe başlatmama tazminatı talep edebilir miyim?",
+    "top_k": 5,
+    "min_score": 0.65,
+    "filtreler": {
+      "karar_turu": "hukuk",
+      "daire": "7. Hukuk Dairesi"
+    }
+  }
+}
+
+tests {
+  test("HTTP 200 ve kaynaklı değerlendirme döner", function() {
+    const body = res.getBody();
+    expect(res.getStatus()).to.equal(200);
+    expect(body.durum).to.equal("tamamlandi");
+    expect(body.degerlendirme_uretildi).to.equal(true);
+    expect(body.llm_cagrildi).to.equal(true);
+  });
+
+  test("Gemma reasoning kapalı çalışır", function() {
+    const body = res.getBody();
+    expect(body.chat_modeli).to.equal("google/gemma-4-12b-qat");
+    expect(body.model_istatistikleri.reasoning_output_tokens).to.equal(0);
+  });
+
+  test("Cevap kaynak etiketi ve hukuki uyarı içerir", function() {
+    const answer = res.getBody().cevap;
+    expect(answer).to.include("[K");
+    expect(answer).to.match(/Somut olayın özelliklerine göre sonuç değişebilir; bu değerlendirme hukuki danışmanlık değildir\.$/);
+  });
+
+  test("Kaynaklar benzersiz ve tam metadatalıdır", function() {
+    const sources = res.getBody().kaynaklar;
+    const decisionIds = sources.map((item) => item.karar_id);
+    expect(sources.length).to.be.at.least(2);
+    expect(new Set(decisionIds).size).to.equal(decisionIds.length);
+    for (const source of sources) {
+      expect(source.kaynak_etiketi).to.match(/^K\d+$/);
+      expect(source.daire).to.be.a("string");
+      expect(source.chunk_metni).to.be.a("string");
+      expect(source.kaynak_url).to.be.a("string");
+    }
+  });
+}

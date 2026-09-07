@@ -67,6 +67,73 @@ class FakeSearchService:
         }
 
 
+class FakeRAGService:
+    def __init__(self):
+        self.calls = []
+
+    def health(self):
+        return {
+            "chat_model": "google/gemma-4-12b-qat",
+            "rag_prompt_version": "1.0",
+            "minimum_rag_sources": 2,
+        }
+
+    def answer(
+        self,
+        query,
+        *,
+        top_k=5,
+        min_score=0.65,
+        metadata_filters=None,
+    ):
+        self.calls.append((query, top_k, min_score, metadata_filters))
+        return {
+            "sorgu": query,
+            "durum": "tamamlandi",
+            "degerlendirme_uretildi": True,
+            "cevap": (
+                "Değerlendirme\nKaynakta fesih incelenmiştir [K1].\n\n"
+                "Sınırlamalar\nKaynakta miktar yoktur.\n"
+                "Somut olayın özelliklerine göre sonuç değişebilir; bu "
+                "değerlendirme hukuki danışmanlık değildir."
+            ),
+            "bulunan_kaynak_sayisi": 1,
+            "kullanilan_kaynak_sayisi": 1,
+            "minimum_gerekli_kaynak": 1,
+            "minimum_benzerlik_skoru": min_score,
+            "filtreler": metadata_filters or {},
+            "chat_modeli": "google/gemma-4-12b-qat",
+            "prompt_surumu": "1.0",
+            "llm_cagrildi": True,
+            "model_istatistikleri": {
+                "input_tokens": 300,
+                "total_output_tokens": 50,
+                "reasoning_output_tokens": 0,
+            },
+            "model_response_id": "resp_test",
+            "sure_ms": 50.0,
+            "uyari": "Hukuki danışmanlık değildir.",
+            "kaynaklar": [
+                {
+                    "kaynak_etiketi": "K1",
+                    "sira": 1,
+                    "benzerlik_skoru": 0.72,
+                    "chunk_id": "d1:c0001",
+                    "karar_id": "d1",
+                    "daire": "7. Hukuk Dairesi",
+                    "esas_no": "2013/2027",
+                    "karar_no": "2013/1322",
+                    "karar_tarihi": "20.02.2013",
+                    "baslik": "İşe iade kararı",
+                    "chunk_metni": "Fesih incelenmiştir.",
+                    "veri_kalite_uyarilari": [],
+                    "kaynak": "TurkLegalBench",
+                    "kaynak_url": "https://example.test/corpus",
+                    "kaynak_lisans": "CC BY 4.0",
+                }
+            ],
+        }
+
 class FastAPIApplicationTests(unittest.TestCase):
     def test_health_and_semantic_search_contract(self):
         service = FakeSearchService()
@@ -152,6 +219,49 @@ class FastAPIApplicationTests(unittest.TestCase):
         self.assertEqual(
             response.json()["detail"]["code"], "semantic_search_failed"
         )
+
+    def test_rag_answer_contract_and_health_model_metadata(self):
+        search = FakeSearchService()
+        rag = FakeRAGService()
+        with TestClient(
+            create_app(search_service=search, rag_service=rag)
+        ) as client:
+            health = client.get("/health")
+            response = client.post(
+                "/api/v1/rag-answer",
+                json={
+                    "olay": "İşveren sözleşmemi geçersiz nedenle feshetti.",
+                    "top_k": 4,
+                    "min_score": 0.66,
+                    "filtreler": {"karar_turu": "hukuk"},
+                },
+            )
+
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json()["chat_model"], "google/gemma-4-12b-qat")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["durum"], "tamamlandi")
+        self.assertEqual(response.json()["kaynaklar"][0]["kaynak_etiketi"], "K1")
+        self.assertEqual(
+            rag.calls,
+            [
+                (
+                    "İşveren sözleşmemi geçersiz nedenle feshetti.",
+                    4,
+                    0.66,
+                    {"karar_turu": "hukuk"},
+                )
+            ],
+        )
+
+    def test_rag_answer_is_unavailable_without_injected_service(self):
+        with TestClient(create_app(search_service=FakeSearchService())) as client:
+            response = client.post(
+                "/api/v1/rag-answer",
+                json={"olay": "İşveren sözleşmemi geçersiz nedenle feshetti."},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "rag_answer_unavailable")
 
 
 if __name__ == "__main__":

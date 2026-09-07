@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scripts.lmstudio_embeddings import DEFAULT_BASE_URL, DEFAULT_EMBEDDING_MODEL
+from scripts.lmstudio_chat import DEFAULT_CHAT_MODEL
 from scripts.qdrant_vector_store import DEFAULT_COLLECTION_NAME, DEFAULT_VECTOR_SIZE
 
 
@@ -32,6 +33,7 @@ def _positive_integer(value: str, *, name: str) -> int:
 class Settings:
     lmstudio_base_url: str = DEFAULT_BASE_URL
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    chat_model: str = DEFAULT_CHAT_MODEL
     qdrant_path: Path = DEFAULT_DATABASE_PATH
     qdrant_collection: str = DEFAULT_COLLECTION_NAME
     vector_size: int = DEFAULT_VECTOR_SIZE
@@ -46,6 +48,9 @@ class Settings:
             ).strip(),
             embedding_model=os.getenv(
                 "YARGITAY_RAG_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
+            ).strip(),
+            chat_model=os.getenv(
+                "YARGITAY_RAG_CHAT_MODEL", DEFAULT_CHAT_MODEL
             ).strip(),
             qdrant_path=Path(
                 os.getenv("YARGITAY_RAG_QDRANT_PATH", str(DEFAULT_DATABASE_PATH))
@@ -71,6 +76,8 @@ class Settings:
             raise SettingsError("LM Studio base URL is empty")
         if not self.embedding_model:
             raise SettingsError("Embedding model is empty")
+        if not self.chat_model:
+            raise SettingsError("Chat model is empty")
         if not self.qdrant_collection:
             raise SettingsError("Qdrant collection name is empty")
         if self.vector_size < 1:

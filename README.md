@@ -81,6 +81,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Semantik arama FastAPI'ye bağlandı; sağlık ve arama uç noktaları Bruno koleksiyonuyla gerçek yerel servis üzerinde `200 OK` yanıtları alınarak doğrulandı.
 - Semantik aramaya isteğe bağlı skor eşiği ve güvenli metadata filtreleri eklendi; aynı karara ait tekrar eden chunk'lar tek sonuca indirildi ve yetersiz sonuç durumu açık hâle getirildi.
 - Altı hukuki sorguyla `top_k`, eşik ve filtre seçenekleri gerçek 31.544 noktalı indekste; üç chunk boyutu ise 31 kararlık zor-negatif havuzda karşılaştırıldı.
+- Bulunan kararları `[K1]` biçiminde etiketleyip Gemma 4 12B QAT modeline aktaran kaynaklı RAG cevap zinciri geliştirildi; yetersiz kaynakta model çağrılmadan güvenli duruş sağlandı.
+- Gemma çıktılarında geçerli kaynak etiketi, reasoning'in kapalı olması, kesin sonuç vermeme ve zorunlu hukuki uyarı kuralları uygulama katmanında doğrulandı.
 
 ## Toplu Veri Kaynağı
 
@@ -199,6 +201,14 @@ python scripts/evaluate_semantic_search_quality.py
 Üç çapa karar ve üç alan dışı hukuki sorguyla yapılan gerçek indeks deneyinde `top_k=10`, `min_score=0,65` ayarı çapa kararların `2/3`'ünü bulup alan dışı sorguların `2/3`'ünü reddetti. Doğru daire önceden bilindiğinde `daire` filtresi üç çapa kararı da ilk sıraya taşırken karar türü filtresi bu küçük sette ek kazanım sağlamadı. `0,65` eşiği küçük geliştirme setine özgü olduğundan zorunlu varsayılan yapılmadı.
 
 31 kararlık zor-negatif aday havuzundaki chunk karşılaştırmasında 800/200 ayarı recall@5 değerini `2/3`, mevcut 1200/200 ayarı `1/3`, 1600/200 ayarı `0/3` üretti. Bu sınırlı deney yeniden indeksleme kararı için yeterli görülmedi; mevcut indeks korundu ve 800/200 daha geniş test için aday kaydedildi. Yöntem, tüm sonuçlar ve sınırlamalar `docs/gun17_semantik_arama_kalite_iyilestirmesi.md` dosyasındadır.
+
+## Gemma RAG Cevap Zinciri
+
+`POST /api/v1/rag-answer` uç noktası semantik arama ile bulunan benzersiz kararları Gemma 4 12B QAT modeline aktararak kaynaklı bir değerlendirme üretir. Varsayılan `top_k=5` ve `min_score=0,65` değerleri kullanılır; en az iki kaynak bulunamazsa Gemma çağrılmaz ve standart yetersiz bilgi cevabı döner. Chat modeli `YARGITAY_RAG_CHAT_MODEL` ortam değişkeniyle yapılandırılabilir.
+
+Her karar `[K1]`, `[K2]` biçiminde etiketlenir ve cevapta kullanılan etiketler gerçek kaynak listesiyle doğrulanır. Bilinmeyen kaynak etiketi, kaynaksız cevap, kesin dava sonucu ifadesi veya zorunlu hukuki uyarının eksikliği güvenli biçimde reddedilir. LM Studio isteği `reasoning=off`, `temperature=0` ve `stream=false` seçenekleriyle gönderilir; model kimliği ile token istatistikleri doğrulanır.
+
+Bruno koleksiyonundaki `04-rag-answer.bru` kaynak bulunan normal akışı, `05-rag-insufficient-sources.bru` ise alan dışı sorguda Gemma çağrılmadan güvenli duruşu test eder. Gerçek uçtan uca işe iade testinde beş karar kullanılmış, cevap `[K1]`-`[K5]` etiketlerini içermiş ve reasoning tokenı sıfır kalmıştır. Uygulama ayrıntıları ve test sonuçları `docs/gun18_gemma_rag_cevap_zinciri.md` dosyasındadır.
 
 ## Uyarı
 
