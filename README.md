@@ -77,6 +77,8 @@ Yerel model ve embedding işlemlerinde NVIDIA GeForce RTX 5060 Ti 16 GB ekran ka
 - Karar bağlantısı, hukuk metadata'sı, kaynak/lisans, veri kalitesi ve embedding bilgilerini kapsayan 22 alanlı payload şeması tanımlandı; gerçek karar parçalarıyla ekleme, okuma, silme, geri yükleme ve benzerlik sorguları doğrulandı.
 - 31.544 temiz karar parçasının tamamı LM Studio ile 128 kayıttan oluşan batch'ler hâlinde vektörleştirilip metadata bilgileriyle Qdrant'a kaydedildi.
 - Toplu indeksleme akışına atomik ilerleme durumu, kaldığı yerden devam, üç denemeli hata yönetimi, başarısız batch günlüğü ve son kayıt sayısı/payload karma doğrulaması eklendi; gerçek çalıştırma 247 batch ve sıfır hatayla tamamlandı.
+- Kullanıcının doğal dille anlattığı hukuki olayı LM Studio ile embedding'e dönüştürüp 31.544 noktalı Qdrant koleksiyonunda en yakın karar parçalarını bulan doğrulamalı semantik arama servisi geliştirildi.
+- Semantik arama FastAPI'ye bağlandı; sağlık ve arama uç noktaları Bruno koleksiyonuyla gerçek yerel servis üzerinde `200 OK` yanıtları alınarak doğrulandı.
 
 ## Toplu Veri Kaynağı
 
@@ -168,7 +170,19 @@ Araç işlem başlamadan önce 31.544 kaynak kaydın UTF-8/JSON biçimini, benze
 
 Gerçek çalıştırmada `text-embedding-embeddinggemma-300m` modeliyle 768 boyutlu 31.544 vektör, 247 batch içinde `yargitay_karar_parcalari` koleksiyonuna kaydedildi. İşlem 717,227 saniye sürdü ve saniyede ortalama 43,98 parça işlendi. Başarısız deneme oluşmadı; koleksiyonun kesin kayıt sayısı kaynak sayısıyla eşleşti ve ilk, orta, son örneklerin payload metin karmaları doğrulandı. Kaynakta eksik olan `esas_no`, `karar_no` veya `karar_tarihi` değerleri uydurulmadan `null` olarak, ilgili kalite uyarılarıyla birlikte korundu.
 
-Qdrant istemcisi yerel modda 20.000 üzerindeki koleksiyonlar için performans uyarısı verir. Mevcut 31.544 noktalı geliştirme indeksi doğrulanmış ve kullanılabilir durumdadır; daha yüksek ölçek veya üretim performansı gerektiğinde aynı koleksiyon şemasıyla Qdrant sunucu/Docker moduna geçilmesi değerlendirilmelidir. Ayrıntılar `docs/gun15_toplu_embedding_ve_qdrant_indeksleme.md` dosyasındadır. 16. gün aşaması, kullanıcı sorgusunu embedding'e dönüştüren semantik arama modülünü ve FastAPI bağlantısını geliştirmektir.
+Qdrant istemcisi yerel modda 20.000 üzerindeki koleksiyonlar için performans uyarısı verir. Mevcut 31.544 noktalı geliştirme indeksi doğrulanmış ve kullanılabilir durumdadır; daha yüksek ölçek veya üretim performansı gerektiğinde aynı koleksiyon şemasıyla Qdrant sunucu/Docker moduna geçilmesi değerlendirilmelidir. Ayrıntılar `docs/gun15_toplu_embedding_ve_qdrant_indeksleme.md` dosyasındadır.
+
+## Semantik Arama API'si ve Bruno Testleri
+
+LM Studio'da `text-embedding-embeddinggemma-300m` modeli açıkken FastAPI servisi proje kökünden şu komutla başlatılabilir:
+
+```powershell
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Servis başlarken LM Studio modelini, Qdrant koleksiyon şemasını ve kesin `31.544` nokta sayısını doğrular. `GET /health` çalışma durumunu; `POST /api/v1/semantic-search` ise `olay` ve isteğe bağlı `top_k` alanlarını alıp sorgu embedding'ini üretir, Qdrant'taki en yakın parçaları benzerlik sırasıyla ve kaynak/lisans metadata'sıyla döndürür. Olay metni 10-4.000 karakter, `top_k` değeri 1-20 aralığında doğrulanır; bağımlılık hataları yapılandırılmış `503` yanıtına çevrilir.
+
+`bruno` klasörü Bruno'da koleksiyon olarak açılıp `Local` ortamı seçildiğinde sağlık ve örnek işe iade sorgusu hazır olarak çalıştırılabilir. Gerçek GUI testinde sağlık isteği `200 OK` ve `31.544` indeksli parça; semantik arama isteği `200 OK` ve beş sonuç döndürdü. İlk sonuç `d1113966700:c0001`, benzerlik skoru `0,714982` ve `7. Hukuk Dairesi` kararı oldu. İstek dosyalarındaki Bruno testleri durum kodunu, sonuç sayısını, kaynak alanlarını ve skor sıralamasını denetler. Ayrıntılar `docs/gun16_semantik_arama_fastapi_bruno.md` dosyasındadır. 17. gün aşamasında semantik arama kalitesi daha geniş ve etiketli bir sorgu kümesiyle ölçülecek; gerekli filtreleme ve eşik seçenekleri karşılaştırılacaktır.
 
 ## Uyarı
 

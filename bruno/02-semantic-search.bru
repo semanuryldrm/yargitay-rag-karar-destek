@@ -1,0 +1,50 @@
+meta {
+  name: Semantik Karar Arama
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/semantic-search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "olay": "İşveren belirsiz süreli iş sözleşmemi geçerli bir neden göstermeden feshetti. İşe iade talep edebilir miyim?",
+    "top_k": 5
+  }
+}
+
+tests {
+  test("HTTP 200 döner", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("Beş benzer karar parçası döner", function() {
+    expect(res.getBody().sonuc_sayisi).to.equal(5);
+    expect(res.getBody().sonuclar).to.have.lengthOf(5);
+  });
+
+  test("Sonuçlar sıralı ve kaynaklıdır", function() {
+    const results = res.getBody().sonuclar;
+    expect(results[0].sira).to.equal(1);
+    expect(results[0].chunk_id).to.be.a("string");
+    expect(results[0].daire).to.be.a("string");
+    expect(results[0].chunk_metni).to.be.a("string");
+    expect(results[0].kaynak).to.be.a("string");
+  });
+
+  test("Skorlar azalan sıradadır", function() {
+    const scores = res.getBody().sonuclar.map((item) => item.benzerlik_skoru);
+    for (let index = 1; index < scores.length; index += 1) {
+      expect(scores[index - 1]).to.be.at.least(scores[index]);
+    }
+  });
+}

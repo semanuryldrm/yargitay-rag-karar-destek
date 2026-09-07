@@ -1,0 +1,25 @@
+meta {
+  name: Sistem Sağlığı
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("HTTP 200 döner", function() {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("31.544 chunk hazırdır", function() {
+    expect(res.getBody().indexed_chunks).to.equal(31544);
+  });
+
+  test("Servis durumu ok değeridir", function() {
+    expect(res.getBody().status).to.equal("ok");
+  });
+}
